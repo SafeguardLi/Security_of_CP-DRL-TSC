@@ -1,0 +1,25 @@
+<configuration>
+	<input>
+		<net-file value="plymouth.net.xml" />
+		<route-files value="plymouth_test.rou.xml" />
+        <additional-files value="plymouth_sourcenode.additional.xml" />
+	</input>
+
+	<gui_only>
+        <tracker-interval value="0.1"/>
+    </gui_only>
+
+    <time>
+        <step-length value="0.1"/>
+    </time>
+
+    <processing>
+        <lateral-resolution value="0.1"/>
+    </processing>
+
+    <output>
+        <output-prefix value='TIME'/>
+        <tripinfo-output value ="../../exp_log/sumo/trip_info.xml"/>
+    </output>
+
+</configuration>

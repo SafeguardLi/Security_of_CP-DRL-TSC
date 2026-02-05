@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- generated on Mon 03 Oct 2022 05:26:14 PM EDT by Eclipse SUMO netedit Version 1.8.0
+<configuration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/netconvertConfiguration.xsd">
+
+    <input>
+        <sumo-net-file value="/media/data/CARLA_0.9.13/Co-Simulation/Sumo/examples/plymouth_from_CARLA/plymouth.net.xml"/>
+    </input>
+
+    <output>
+        <output-file value="/media/data/CARLA_0.9.13/Co-Simulation/Sumo/examples/plymouth_from_CARLA/plymouth.net.xml"/>
+    </output>
+
+    <processing>
+        <geometry.min-radius.fix.railways value="false"/>
+        <geometry.max-grade.fix value="false"/>
+        <offset.disable-normalization value="true"/>
+        <lefthand value="false"/>
+    </processing>
+
+    <junctions>
+        <no-turnarounds value="true"/>
+        <junctions.corner-detail value="5"/>
+        <junctions.limit-turn-speed value="5.5"/>
+        <rectangular-lane-cut value="true"/>
+    </junctions>
+
+    <pedestrian>
+        <walkingareas value="false"/>
+    </pedestrian>
+
+    <netedit>
+        <route-files value="/media/data/CARLA_0.9.13/Co-Simulation/Sumo/examples/plymouth_from_CARLA/plymouth.rou.xml"/>
+    </netedit>
+
+    <report>
+        <aggregate-warnings value="5"/>
+    </report>
+
+</configuration>
+-->
+
+<!-- real-world demand
+<routes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/routes_file.xsd">
+    <flow id="flow_0" begin="0.00" from="19.0.00" to="-6.0.00" end="3600.00" vehsPerHour="1112.00"/>
+    <flow id="flow_1" begin="0.00" from="6.0.00" to="-19.0.00" end="3600.00" vehsPerHour="787.00"/>
+    <flow id="flow_10" begin="0.00" from="1.0.00" to="-6.0.00" end="3600.00" vehsPerHour="548.00"/>
+    <flow id="flow_11" begin="0.00" from="1.0.00" to="-19.0.00" end="3600.00" vehsPerHour="102.00"/>
+    <flow id="flow_2" begin="0.00" from="-0.0.00" to="-1.0.00" end="3600.00" vehsPerHour="176.00"/>
+    <flow id="flow_3" begin="0.00" from="1.0.00" to="0.0.00" end="3600.00" vehsPerHour="115.00"/>
+    <flow id="flow_4" begin="0.00" from="19.0.00" to="-1.0.00" end="3600.00" vehsPerHour="61.00"/>
+    <flow id="flow_5" begin="0.00" from="19.0.00" to="0.0.00" end="3600.00" vehsPerHour="55.00"/>
+    <flow id="flow_6" begin="0.00" from="6.0.00" to="-1.0.00" end="3600.00" vehsPerHour="249.00"/>
+    <flow id="flow_7" begin="0.00" from="6.0.00" to="0.0.00" end="3600.00" vehsPerHour="76.00"/>
+    <flow id="flow_8" begin="0.00" from="-0.0.00" to="-6.0.00" end="3600.00" vehsPerHour="365.00"/>
+    <flow id="flow_9" begin="0.00" from="-0.0.00" to="-19.0.00" end="3600.00" vehsPerHour="158.00"/>
+</routes>
+
+
+50%
+<routes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/routes_file.xsd">
+    <flow id="flow_0" begin="0.00" from="19.0.00" to="-6.0.00" end="3600.00" vehsPerHour="667.00"/>
+    <flow id="flow_1" begin="0.00" from="6.0.00" to="-19.0.00" end="3600.00" vehsPerHour="472.00"/>
+    <flow id="flow_10" begin="0.00" from="1.0.00" to="-6.0.00" end="3600.00" vehsPerHour="329.00"/>
+    <flow id="flow_11" begin="0.00" from="1.0.00" to="-19.0.00" end="3600.00" vehsPerHour="61.00"/>
+    <flow id="flow_2" begin="0.00" from="-0.0.00" to="-1.0.00" end="3600.00" vehsPerHour="106.00"/>
+    <flow id="flow_3" begin="0.00" from="1.0.00" to="0.0.00" end="3600.00" vehsPerHour="69.00"/>
+    <flow id="flow_4" begin="0.00" from="19.0.00" to="-1.0.00" end="3600.00" vehsPerHour="37.00"/>
+    <flow id="flow_5" begin="0.00" from="19.0.00" to="0.0.00" end="3600.00" vehsPerHour="33.00"/>
+    <flow id="flow_6" begin="0.00" from="6.0.00" to="-1.0.00" end="3600.00" vehsPerHour="149.00"/>
+    <flow id="flow_7" begin="0.00" from="6.0.00" to="0.0.00" end="3600.00" vehsPerHour="46.00"/>
+    <flow id="flow_8" begin="0.00" from="-0.0.00" to="-6.0.00" end="3600.00" vehsPerHour="219.00"/>
+    <flow id="flow_9" begin="0.00" from="-0.0.00" to="-19.0.00" end="3600.00" vehsPerHour="95.00"/>
+</routes>
+
+
+70% 
+<routes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/routes_file.xsd">
+    <flow id="flow_0" begin="0.00" from="19.0.00" to="-6.0.00" end="3600.00" vehsPerHour="778.00"/>
+    <flow id="flow_1" begin="0.00" from="6.0.00" to="-19.0.00" end="3600.00" vehsPerHour="551.00"/>
+    <flow id="flow_10" begin="0.00" from="1.0.00" to="-6.0.00" end="3600.00" vehsPerHour="384.00"/>
+    <flow id="flow_11" begin="0.00" from="1.0.00" to="-19.0.00" end="3600.00" vehsPerHour="71.00"/>
+    <flow id="flow_2" begin="0.00" from="-0.0.00" to="-1.0.00" end="3600.00" vehsPerHour="123.00"/>
+    <flow id="flow_3" begin="0.00" from="1.0.00" to="0.0.00" end="3600.00" vehsPerHour="81.00"/>
+    <flow id="flow_4" begin="0.00" from="19.0.00" to="-1.0.00" end="3600.00" vehsPerHour="43.00"/>
+    <flow id="flow_5" begin="0.00" from="19.0.00" to="0.0.00" end="3600.00" vehsPerHour="39.00"/>
+    <flow id="flow_6" begin="0.00" from="6.0.00" to="-1.0.00" end="3600.00" vehsPerHour="174.00"/>
+    <flow id="flow_7" begin="0.00" from="6.0.00" to="0.0.00" end="3600.00" vehsPerHour="53.00"/>
+    <flow id="flow_8" begin="0.00" from="-0.0.00" to="-6.0.00" end="3600.00" vehsPerHour="256.00"/>
+    <flow id="flow_9" begin="0.00" from="-0.0.00" to="-19.0.00" end="3600.00" vehsPerHour="111.00"/>
+</routes>
+
+##100% real-world demand
+<routes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/routes_file.xsd">
+    <flow id="flow_0" begin="0.00" from="19.0.00" to="-6.0.00" end="3600.00" vehsPerHour="1112.00"/>
+    <flow id="flow_1" begin="0.00" from="6.0.00" to="-19.0.00" end="3600.00" vehsPerHour="787.00"/>
+    <flow id="flow_10" begin="0.00" from="1.0.00" to="-6.0.00" end="3600.00" vehsPerHour="548.00"/>
+    <flow id="flow_11" begin="0.00" from="1.0.00" to="-19.0.00" end="3600.00" vehsPerHour="102.00"/>
+    <flow id="flow_2" begin="0.00" from="-0.0.00" to="-1.0.00" end="3600.00" vehsPerHour="176.00"/>
+    <flow id="flow_3" begin="0.00" from="1.0.00" to="0.0.00" end="3600.00" vehsPerHour="115.00"/>
+    <flow id="flow_4" begin="0.00" from="19.0.00" to="-1.0.00" end="3600.00" vehsPerHour="61.00"/>
+    <flow id="flow_5" begin="0.00" from="19.0.00" to="0.0.00" end="3600.00" vehsPerHour="55.00"/>
+    <flow id="flow_6" begin="0.00" from="6.0.00" to="-1.0.00" end="3600.00" vehsPerHour="249.00"/>
+    <flow id="flow_7" begin="0.00" from="6.0.00" to="0.0.00" end="3600.00" vehsPerHour="76.00"/>
+    <flow id="flow_8" begin="0.00" from="-0.0.00" to="-6.0.00" end="3600.00" vehsPerHour="365.00"/>
+    <flow id="flow_9" begin="0.00" from="-0.0.00" to="-19.0.00" end="3600.00" vehsPerHour="158.00"/>
+</routes>
+
+
+dynamic 100%->70%->120%
+<routes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/routes_file.xsd">
+    <flow id="flow_0" begin="0.00" from="19.0.00" to="-6.0.00" end="600.00" vehsPerHour="1112.00"/>
+    <flow id="flow_1" begin="0.00" from="6.0.00" to="-19.0.00" end="600.00" vehsPerHour="787.00"/>
+    <flow id="flow_10" begin="0.00" from="1.0.00" to="-6.0.00" end="600.00" vehsPerHour="548.00"/>
+    <flow id="flow_11" begin="0.00" from="1.0.00" to="-19.0.00" end="600.00" vehsPerHour="102.00"/>
+    <flow id="flow_2" begin="0.00" from="-0.0.00" to="-1.0.00" end="600.00" vehsPerHour="176.00"/>
+    <flow id="flow_3" begin="0.00" from="1.0.00" to="0.0.00" end="600.00" vehsPerHour="115.00"/>
+    <flow id="flow_4" begin="0.00" from="19.0.00" to="-1.0.00" end="600.00" vehsPerHour="61.00"/>
+    <flow id="flow_5" begin="0.00" from="19.0.00" to="0.0.00" end="600.00" vehsPerHour="55.00"/>
+    <flow id="flow_6" begin="0.00" from="6.0.00" to="-1.0.00" end="600.00" vehsPerHour="249.00"/>
+    <flow id="flow_7" begin="0.00" from="6.0.00" to="0.0.00" end="600.00" vehsPerHour="76.00"/>
+    <flow id="flow_8" begin="0.00" from="-0.0.00" to="-6.0.00" end="600.00" vehsPerHour="365.00"/>
+    <flow id="flow_9" begin="0.00" from="-0.0.00" to="-19.0.00" end="600.00" vehsPerHour="158.00"/>
+    <flow id="flow_0_1" begin="600.00" from="19.0.00" to="-6.0.00" end="1200.00" vehsPerHour="778.00"/>
+    <flow id="flow_1_1" begin="600.00" from="6.0.00" to="-19.0.00" end="1200.00" vehsPerHour="551.00"/>
+    <flow id="flow_10_1" begin="600.00" from="1.0.00" to="-6.0.00" end="1200.00" vehsPerHour="384.00"/>
+    <flow id="flow_11_1" begin="600.00" from="1.0.00" to="-19.0.00" end="1200.00" vehsPerHour="71.00"/>
+    <flow id="flow_2_1" begin="600.00" from="-0.0.00" to="-1.0.00" end="1200.00" vehsPerHour="123.00"/>
+    <flow id="flow_3_1" begin="600.00" from="1.0.00" to="0.0.00" end="1200.00" vehsPerHour="81.00"/>
+    <flow id="flow_4_1" begin="600.00" from="19.0.00" to="-1.0.00" end="1200.00" vehsPerHour="43.00"/>
+    <flow id="flow_5_1" begin="600.00" from="19.0.00" to="0.0.00" end="1200.00" vehsPerHour="39.00"/>
+    <flow id="flow_6_1" begin="600.00" from="6.0.00" to="-1.0.00" end="1200.00" vehsPerHour="174.00"/>
+    <flow id="flow_7_1" begin="600.00" from="6.0.00" to="0.0.00" end="1200.00" vehsPerHour="53.00"/>
+    <flow id="flow_8_1" begin="600.00" from="-0.0.00" to="-6.0.00" end="1200.00" vehsPerHour="256.00"/>
+    <flow id="flow_9_1" begin="600.00" from="-0.0.00" to="-19.0.00" end="1200.00" vehsPerHour="111.00"/>
+    <flow id="flow_0_2" begin="1200.00" from="19.0.00" to="-6.0.00" end="1800.00" vehsPerHour="1334.00"/>
+    <flow id="flow_1_2" begin="1200.00" from="6.0.00" to="-19.0.00" end="1800.00" vehsPerHour="944.00"/>
+    <flow id="flow_10_2" begin="1200.00" from="1.0.00" to="-6.0.00" end="1800.00" vehsPerHour="658.00"/>
+    <flow id="flow_11_2" begin="1200.00" from="1.0.00" to="-19.0.00" end="1800.00" vehsPerHour="122.00"/>
+    <flow id="flow_2_2" begin="1200.00" from="-0.0.00" to="-1.0.00" end="1800.00" vehsPerHour="211.00"/>
+    <flow id="flow_3_2" begin="1200.00" from="1.0.00" to="0.0.00" end="1800.00" vehsPerHour="138.00"/>
+    <flow id="flow_4_2" begin="1200.00" from="19.0.00" to="-1.0.00" end="1800.00" vehsPerHour="73.00"/>
+    <flow id="flow_5_2" begin="1200.00" from="19.0.00" to="0.0.00" end="1800.00" vehsPerHour="66.00"/>
+    <flow id="flow_6_2" begin="1200.00" from="6.0.00" to="-1.0.00" end="1800.00" vehsPerHour="299.00"/>
+    <flow id="flow_7_2" begin="1200.00" from="6.0.00" to="0.0.00" end="1800.00" vehsPerHour="91.00"/>
+    <flow id="flow_8_2" begin="1200.00" from="-0.0.00" to="-6.0.00" end="1800.00" vehsPerHour="438.00"/>
+    <flow id="flow_9_2" begin="1200.00" from="-0.0.00" to="-19.0.00" end="1800.00" vehsPerHour="190.00"/>
+</routes>
+
+-->
+
+<routes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/routes_file.xsd">
+    <flow id="flow_0" begin="0.00" from="19.0.00" to="-6.0.00" end="3600.00" vehsPerHour="1112.00"/>
+    <flow id="flow_1" begin="0.00" from="6.0.00" to="-19.0.00" end="3600.00" vehsPerHour="787.00"/>
+    <flow id="flow_10" begin="0.00" from="1.0.00" to="-6.0.00" end="3600.00" vehsPerHour="548.00"/>
+    <flow id="flow_11" begin="0.00" from="1.0.00" to="-19.0.00" end="3600.00" vehsPerHour="102.00"/>
+    <flow id="flow_2" begin="0.00" from="-0.0.00" to="-1.0.00" end="3600.00" vehsPerHour="176.00"/>
+    <flow id="flow_3" begin="0.00" from="1.0.00" to="0.0.00" end="3600.00" vehsPerHour="115.00"/>
+    <flow id="flow_4" begin="0.00" from="19.0.00" to="-1.0.00" end="3600.00" vehsPerHour="61.00"/>
+    <flow id="flow_5" begin="0.00" from="19.0.00" to="0.0.00" end="3600.00" vehsPerHour="55.00"/>
+    <flow id="flow_6" begin="0.00" from="6.0.00" to="-1.0.00" end="3600.00" vehsPerHour="249.00"/>
+    <flow id="flow_7" begin="0.00" from="6.0.00" to="0.0.00" end="3600.00" vehsPerHour="76.00"/>
+    <flow id="flow_8" begin="0.00" from="-0.0.00" to="-6.0.00" end="3600.00" vehsPerHour="365.00"/>
+    <flow id="flow_9" begin="0.00" from="-0.0.00" to="-19.0.00" end="3600.00" vehsPerHour="158.00"/>
+</routes>
+
+<!-- <routes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/routes_file.xsd">
+    <flow id="flow_0" begin="0.00" from="19.0.00" to="-6.0.00" end="600.00" vehsPerHour="778.40"/>
+    <flow id="flow_1" begin="0.00" from="6.0.00" to="-19.0.00" end="600.00" vehsPerHour="550.90"/>
+    <flow id="flow_10" begin="0.00" from="1.0.00" to="-6.0.00" end="600.00" vehsPerHour="383.60"/>
+    <flow id="flow_11" begin="0.00" from="1.0.00" to="-19.0.00" end="600.00" vehsPerHour="71.40"/>
+    <flow id="flow_2" begin="0.00" from="-0.0.00" to="-1.0.00" end="600.00" vehsPerHour="123.20"/>
+    <flow id="flow_3" begin="0.00" from="1.0.00" to="0.0.00" end="600.00" vehsPerHour="80.50"/>
+    <flow id="flow_4" begin="0.00" from="19.0.00" to="-1.0.00" end="600.00" vehsPerHour="42.70"/>
+    <flow id="flow_5" begin="0.00" from="19.0.00" to="0.0.00" end="600.00" vehsPerHour="38.50"/>
+    <flow id="flow_6" begin="0.00" from="6.0.00" to="-1.0.00" end="600.00" vehsPerHour="174.30"/>
+    <flow id="flow_7" begin="0.00" from="6.0.00" to="0.0.00" end="600.00" vehsPerHour="53.20"/>
+    <flow id="flow_8" begin="0.00" from="-0.0.00" to="-6.0.00" end="600.00" vehsPerHour="255.50"/>
+    <flow id="flow_9" begin="0.00" from="-0.0.00" to="-19.0.00" end="600.00" vehsPerHour="110.60"/>
+
+    <flow id="flow_0_1" begin="600.00" from="19.0.00" to="-6.0.00" end="1200.00" vehsPerHour="544.60"/>
+    <flow id="flow_1_1" begin="600.00" from="6.0.00" to="-19.0.00" end="1200.00" vehsPerHour="385.70"/>
+    <flow id="flow_10_1" begin="600.00" from="1.0.00" to="-6.0.00" end="1200.00" vehsPerHour="268.80"/>
+    <flow id="flow_11_1" begin="600.00" from="1.0.00" to="-19.0.00" end="1200.00" vehsPerHour="49.70"/>
+    <flow id="flow_2_1" begin="600.00" from="-0.0.00" to="-1.0.00" end="1200.00" vehsPerHour="86.10"/>
+    <flow id="flow_3_1" begin="600.00" from="1.0.00" to="0.0.00" end="1200.00" vehsPerHour="56.70"/>
+    <flow id="flow_4_1" begin="600.00" from="19.0.00" to="-1.0.00" end="1200.00" vehsPerHour="30.10"/>
+    <flow id="flow_5_1" begin="600.00" from="19.0.00" to="0.0.00" end="1200.00" vehsPerHour="27.30"/>
+    <flow id="flow_6_1" begin="600.00" from="6.0.00" to="-1.0.00" end="1200.00" vehsPerHour="121.80"/>
+    <flow id="flow_7_1" begin="600.00" from="6.0.00" to="0.0.00" end="1200.00" vehsPerHour="37.10"/>
+    <flow id="flow_8_1" begin="600.00" from="-0.0.00" to="-6.0.00" end="1200.00" vehsPerHour="179.20"/>
+    <flow id="flow_9_1" begin="600.00" from="-0.0.00" to="-19.0.00" end="1200.00" vehsPerHour="77.70"/>
+
+    <flow id="flow_0_2" begin="1200.00" from="19.0.00" to="-6.0.00" end="2100.00" vehsPerHour="933.80"/>
+    <flow id="flow_1_2" begin="1200.00" from="6.0.00" to="-19.0.00" end="2100.00" vehsPerHour="660.80"/>
+    <flow id="flow_10_2" begin="1200.00" from="1.0.00" to="-6.0.00" end="2100.00" vehsPerHour="460.60"/>
+    <flow id="flow_11_2" begin="1200.00" from="1.0.00" to="-19.0.00" end="2100.00" vehsPerHour="85.40"/>
+    <flow id="flow_2_2" begin="1200.00" from="-0.0.00" to="-1.0.00" end="2100.00" vehsPerHour="147.70"/>
+    <flow id="flow_3_2" begin="1200.00" from="1.0.00" to="0.0.00" end="2100.00" vehsPerHour="96.60"/>
+    <flow id="flow_4_2" begin="1200.00" from="19.0.00" to="-1.0.00" end="2100.00" vehsPerHour="51.10"/>
+    <flow id="flow_5_2" begin="1200.00" from="19.0.00" to="0.0.00" end="2100.00" vehsPerHour="46.20"/>
+    <flow id="flow_6_2" begin="1200.00" from="6.0.00" to="-1.0.00" end="2100.00" vehsPerHour="209.30"/>
+    <flow id="flow_7_2" begin="1200.00" from="6.0.00" to="0.0.00" end="2100.00" vehsPerHour="63.70"/>
+    <flow id="flow_8_2" begin="1200.00" from="-0.0.00" to="-6.0.00" end="2100.00" vehsPerHour="306.60"/>
+    <flow id="flow_9_2" begin="1200.00" from="-0.0.00" to="-19.0.00" end="2100.00" vehsPerHour="133.00"/> -->
+<!-- </routes> -->

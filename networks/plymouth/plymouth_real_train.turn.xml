@@ -1,0 +1,24 @@
+<edgeRelations>
+	<interval begin="0" end="3600">
+		<edgeRelation from="-11.0.00" to="-3.0.00" probability="0.905"/>
+		<edgeRelation from="-11.0.00" to="-16.0.00" probability="0.05"/>
+		<edgeRelation from="-11.0.00" to="17.0.00" probability="0.045"/>
+
+		<edgeRelation from="-17.0.00" to="-16.0.00" probability="0.252"/>
+		<edgeRelation from="-17.0.00" to="11.0.00" probability="0.226"/>
+		<edgeRelation from="-17.0.00" to="-3.0.00" probability="0.522"/>
+
+		<edgeRelation from="3.0.00" to="11.0.00" probability="0.708"/>
+		<edgeRelation from="3.0.00" to="17.0.00" probability="0.068"/>
+		<edgeRelation from="3.0.00" to="-16.0.00" probability="0.224"/>
+
+		<edgeRelation from="16.0.00" to="17.0.00" probability="0.15"/>
+		<edgeRelation from="16.0.00" to="-3.0.00" probability="0.717"/>
+		<edgeRelation from="16.0.00" to="11.0.00" probability="0.133"/>
+
+
+		</interval>
+	<turns>
+		<sink edges="-19.0.00 0.0.00 -6.0.00 -1.0.00"/>
+	</turns>
+</edgeRelations>
