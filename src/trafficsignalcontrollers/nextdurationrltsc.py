@@ -62,7 +62,7 @@ class NextDurationRLTSC(TrafficSignalController):
                         state = np.concatenate( [self.get_state(), self.phase_to_one_hot[phase]] ) 
                 self.s = state
                 if self.tsc_type == 'presslight_ddpg':                                                                         
-                    action = self.rlagent.get_action(state[1])  #Ujwal: Use local state to get action from actor network
+                    action = self.rlagent.get_action(state[1])  
                 else:                                                       
                     action = self.rlagent.get_action(state)                                                       
                 self.a = action                                                                        

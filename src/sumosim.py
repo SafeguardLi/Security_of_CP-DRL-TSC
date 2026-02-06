@@ -72,7 +72,6 @@ class SumoSim:
                 self.global_metric_args = []
         self.global_traffic_metrics = GlobalTrafficMetrics(netdata, self.global_metric_args, self.args.mode)
 
-        # Yaxing
         print(idx) # wz: idx is the index of thread
         check_and_make_dir('./runtime')
         self.cwd = './runtime/' + str(idx) + '/'
@@ -262,8 +261,8 @@ class SumoSim:
         #around the traffic signal controller
         v_data = self.conn.vehicle.getAllSubscriptionResults()
         lane_vehicles = {}
-        lane_vehicles_cv = {} # wz: cv
-        lane_vehicles_uv = {} # Ujwal: uv
+        lane_vehicles_cv = {} #
+        lane_vehicles_uv = {} # 
         for v in v_data:
             lane = v_data[v][traci.constants.VAR_LANE_ID]
             # wz: note, here the lane could be the outgoing lane. So we will store vehicle info on outgoing lanes

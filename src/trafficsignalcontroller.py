@@ -382,7 +382,7 @@ class TrafficSignalController:
         # self.display_queue(data, self.t)
         ################################
 
-        self.trafficmetrics.update(data, cv_data) # Ujwal: see if this needs to accomodate UV data
+        self.trafficmetrics.update(data, cv_data) #
 
         #cv_data = self.get_v_data(con_veh_ls,mask,data) # wz: filter the data for cvs
         if act_lp:
@@ -455,7 +455,7 @@ class TrafficSignalController:
     def next_phase_duration(self,current_phase):
         raise NotImplementedError("Subclasses should implement this!")
 
-    def update(self, data, cv_data, uv_data, mask): #Ujwal added cv_data, uv_data for global critic; wz add mask
+    def update(self, data, cv_data, uv_data, mask): #
         """
             Implement this function to perform any
            traffic signal class specific control/updates 
@@ -468,8 +468,8 @@ class TrafficSignalController:
         tl_data = self.conn.junction.getContextSubscriptionResults(self.id)                          
         #create empty incoming lanes for use else where
         lane_vehicles = {l:{} for l in self.incoming_lanes}
-        lane_vehicles_cv = {l: {} for l in self.incoming_lanes} # wz: cv
-        lane_vehicles_uv = {l: {} for l in self.incoming_lanes} # Ujwal: uv
+        lane_vehicles_cv = {l: {} for l in self.incoming_lanes} # 
+        lane_vehicles_uv = {l: {} for l in self.incoming_lanes} #
         # out_lane_vehicles = {l:{} for l in self.outgoing_lanes} # wz: presslight
 
         if tl_data is not None:
@@ -984,7 +984,7 @@ class TrafficSignalController:
     
     def get_num_vehicle(self, global_critic='none', num_segments=1):
         #number of vehicles in each incoming lane divided by the lane's capacity
-        if num_segments==1: #Ujwal : Bypass unnecessary computation if no segmentation
+        if num_segments==1: #
 
             if global_critic == 'total':
                 return np.array([len(self.data[lane]) for lane in self.incoming_lanes])
@@ -1077,7 +1077,7 @@ class TrafficSignalController:
 
     def empty_intersection(self):
         # for lane in self.incoming_lanes:
-        #     # wz: here ujwal change it from self.data to self.cv_data makes sense since intersection can only observe CVs.
+        #     
         #     if len(self.cv_data[lane]) > 0:
         #         return False
         # return True
