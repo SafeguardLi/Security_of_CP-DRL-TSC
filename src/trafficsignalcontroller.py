@@ -360,6 +360,7 @@ class TrafficSignalController:
         # con_veh_ls: CAV and detcted LV ID list
         # unequipped_veh_ls: non-detected LV list
         # cav_ls: CAV ID list
+        self._cav_ls = set(cav_ls) if cav_ls else set()
         self.act_ctm = act_ctm
         self.act_lp = act_lp
         self.attacker  = attacker
@@ -382,7 +383,7 @@ class TrafficSignalController:
         # self.display_queue(data, self.t)
         ################################
 
-        self.trafficmetrics.update(data, cv_data) #
+        self.trafficmetrics.update(data, cv_data) #  : see if this needs to accomodate UV data
 
         #cv_data = self.get_v_data(con_veh_ls,mask,data) # wz: filter the data for cvs
         if act_lp:
@@ -455,7 +456,7 @@ class TrafficSignalController:
     def next_phase_duration(self,current_phase):
         raise NotImplementedError("Subclasses should implement this!")
 
-    def update(self, data, cv_data, uv_data, mask): #
+    def update(self, data, cv_data, uv_data, mask): #  added cv_data, uv_data for global critic; wz add mask
         """
             Implement this function to perform any
            traffic signal class specific control/updates 
@@ -468,8 +469,8 @@ class TrafficSignalController:
         tl_data = self.conn.junction.getContextSubscriptionResults(self.id)                          
         #create empty incoming lanes for use else where
         lane_vehicles = {l:{} for l in self.incoming_lanes}
-        lane_vehicles_cv = {l: {} for l in self.incoming_lanes} # 
-        lane_vehicles_uv = {l: {} for l in self.incoming_lanes} #
+        lane_vehicles_cv = {l: {} for l in self.incoming_lanes} # wz: cv
+        lane_vehicles_uv = {l: {} for l in self.incoming_lanes} #  : uv
         # out_lane_vehicles = {l:{} for l in self.outgoing_lanes} # wz: presslight
 
         if tl_data is not None:
@@ -553,9 +554,11 @@ class TrafficSignalController:
                                     # self.get_avg_delay('critic'),
                                     self.get_num_vehicle_cav(num_segments,'critic','inc')]),  #, self.get_num_vehicle_cav(num_segments,'critic','out')
                                     
-                    np.concatenate([self.get_avg_speed(num_segments,'actor'),
+                    np.concatenate([self.get_avg_speed(num_segments,'actor',
+                                        fake_veh_weight=getattr(self, 'fake_veh_weight', 1.0)),
                                     # self.get_avg_delay('actor'),
-                                    self.get_num_vehicle_cav(num_segments,'actor','inc')
+                                    self.get_num_vehicle_cav(num_segments,'actor','inc',
+                                        fake_veh_weight=getattr(self, 'fake_veh_weight', 1.0))
                                     ]),
                     np.concatenate([self.get_avg_speed(num_segments,'critic')[:10],
                                     # self.get_avg_delay('critic'),
@@ -567,7 +570,8 @@ class TrafficSignalController:
             return state
 
         
-    def get_num_vehicle_cav(self,  num_segments=1, agent=None, lane_dir=None):
+    def get_num_vehicle_cav(self, num_segments=1, agent=None, lane_dir=None,
+                            fake_veh_weight=1.0):
         # INPUT:
         #   num_segment: number of road segments for incoming lanes
         #   agent: for critic or for actor
@@ -721,10 +725,10 @@ class TrafficSignalController:
                 for i, phase in enumerate(self.CTM_phase_lane):
                     # # detect left_turn phase here
                     if phase in ['rrrGrrrrrrrrGrrrrr']:
-                        for lane in self.CTM_phase_lane[phase]:                    
+                        for lane in self.CTM_phase_lane[phase]:
                             if lane in self.fake_traj_dict.keys():
                                 for car, info in self.fake_traj_dict[lane].items():
-                                    fv_state[i][-1] += 1
+                                    fv_state[i][-1] += fake_veh_weight
                     else:
                         for lane in self.CTM_phase_lane[phase]:
                             if lane in self.fake_traj_dict.keys():
@@ -735,7 +739,7 @@ class TrafficSignalController:
                                         ind = min(num_segments - 1, int(pos // (
                                                     self.detect_radius / num_segments)))
                                         # -----------------------------------------------
-                                        fv_state[i][ind] += 1
+                                        fv_state[i][ind] += fake_veh_weight
                 
                 # combine fv and cv state
                 # print("Actor num_veh before norm: CV", cv_state, "\n FV:", fv_state) ###
@@ -792,7 +796,7 @@ class TrafficSignalController:
 
             return np.array(avg_delay_cv)/100
     
-    def get_avg_speed(self, num_segments=1, agent=None):
+    def get_avg_speed(self, num_segments=1, agent=None, fake_veh_weight=1.0):
         # Function: return average speed per road segment per green phase
         if agent == "critic":
             n_phase = len(self.max_pressure_lanes)
@@ -934,17 +938,17 @@ class TrafficSignalController:
                     for lane in self.CTM_phase_lane[phase]:
                         if lane in self.fake_traj_dict.keys():
                             for car, info in self.fake_traj_dict[lane].items():
-                                fv_cnt[i][-1] += 1
-                                fv_speed[i][-1] += info["speed"]
+                                fv_cnt[i][-1] += fake_veh_weight
+                                fv_speed[i][-1] += info["speed"] * fake_veh_weight
                 else:
-                    for lane in self.CTM_phase_lane[phase]:    
+                    for lane in self.CTM_phase_lane[phase]:
                         if lane in self.fake_traj_dict.keys():
                             for car, info in self.fake_traj_dict[lane].items():
                                 pos = info["lane_pos"]
                                 if pos <= self.detect_radius:
                                     ind = min(num_segments - 1, int(pos // (self.detect_radius / num_segments)))
-                                    fv_cnt[i][ind] += 1
-                                    fv_speed[i][ind] += info["speed"]
+                                    fv_cnt[i][ind] += fake_veh_weight
+                                    fv_speed[i][ind] += info["speed"] * fake_veh_weight
 
             # Combine fake and real data
             v_cnt = np.array([np.array(a) + np.array(b) for a, b in zip(fv_cnt, cv_cnt)], dtype=object) #
@@ -984,7 +988,7 @@ class TrafficSignalController:
     
     def get_num_vehicle(self, global_critic='none', num_segments=1):
         #number of vehicles in each incoming lane divided by the lane's capacity
-        if num_segments==1: #
+        if num_segments==1: #  : Bypass unnecessary computation if no segmentation
 
             if global_critic == 'total':
                 return np.array([len(self.data[lane]) for lane in self.incoming_lanes])
@@ -1077,7 +1081,7 @@ class TrafficSignalController:
 
     def empty_intersection(self):
         # for lane in self.incoming_lanes:
-        #     
+        #     # wz: here   change it from self.data to self.cv_data makes sense since intersection can only observe CVs.
         #     if len(self.cv_data[lane]) > 0:
         #         return False
         # return True

@@ -73,7 +73,7 @@ class TrafficSignalAttacker:
 
 
         ## 02132023 connected lane section
-        # WZ 10232022: modify the incoming lane and outgoing lane data structure
+        # 10232022: modify the incoming lane and outgoing lane data structure
         self.get_SR_lanes(self.id) #,map_name) # WZ 0215 mainly for Plymouth for now.
         self.conn_incoming_lane = {inc_lane: [inc_lane] for inc_lane in self.incoming_lanes}
         self.conn_outgoing_lane = {out_lane: [out_lane] for out_lane in self.outgoing_lanes}
@@ -341,7 +341,7 @@ class TrafficSignalAttacker:
     #     self.t = time
 
 
-    #     self.trafficmetrics.update(data, cv_data) # 
+    #     self.trafficmetrics.update(data, cv_data) #  : see if this needs to accomodate UV data
 
     #     if act_lp:
     #         self.update_loop_info()
@@ -409,7 +409,7 @@ class TrafficSignalAttacker:
     def next_phase_duration(self,current_phase):
         raise NotImplementedError("Subclasses should implement this!")
 
-    def update(self, data, cv_data, uv_data, mask): #
+    def update(self, data, cv_data, uv_data, mask): #  added cv_data, uv_data for global critic; wz add mask
         """
             Implement this function to perform any
            traffic signal class specific control/updates 
@@ -422,8 +422,8 @@ class TrafficSignalAttacker:
         tl_data = self.conn.junction.getContextSubscriptionResults(self.id)                          
         #create empty incoming lanes for use else where
         lane_vehicles = {l:{} for l in self.incoming_lanes}
-        lane_vehicles_cv = {l: {} for l in self.incoming_lanes} # 
-        lane_vehicles_uv = {l: {} for l in self.incoming_lanes} #
+        lane_vehicles_cv = {l: {} for l in self.incoming_lanes} # wz: cv
+        lane_vehicles_uv = {l: {} for l in self.incoming_lanes} #  : uv
         # out_lane_vehicles = {l:{} for l in self.outgoing_lanes} # wz: presslight
 
         if tl_data is not None:
@@ -989,7 +989,7 @@ class TrafficSignalAttacker:
     
     def get_num_vehicle(self, global_critic='none', num_segments=1):
         #number of vehicles in each incoming lane divided by the lane's capacity
-        if num_segments==1: #
+        if num_segments==1: #  : Bypass unnecessary computation if no segmentation
 
             if global_critic == 'total':
                 return np.array([len(self.data[lane]) for lane in self.incoming_lanes])
@@ -1074,6 +1074,7 @@ class TrafficSignalAttacker:
 
     def empty_intersection(self):
         # for lane in self.incoming_lanes:
+        #     # wz: here   change it from self.data to self.cv_data makes sense since intersection can only observe CVs.
         #     if len(self.cv_data[lane]) > 0:
         #         return False
         # return True

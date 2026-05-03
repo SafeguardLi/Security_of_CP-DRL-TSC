@@ -50,13 +50,16 @@ class SimProc(Process):
                                               True,
                                               self.args.n_hidden) # always load TSC NN
         
-        # generate attacker NN
-        att_neural_networks = gen_att_neural_networks(self.args, 
-                                              self.netdata, 
-                                              self.netdata['inter'].keys(),
-                                              learner,
-                                              load,
-                                              self.args.n_hidden)
+        # generate attacker NN only when attack is enabled
+        if getattr(self.args, 'att_model', None) == 'drl':
+            att_neural_networks = gen_att_neural_networks(self.args,
+                                                  self.netdata,
+                                                  self.netdata['inter'].keys(),
+                                                  learner,
+                                                  load,
+                                                  self.args.n_hidden)
+        else:
+            att_neural_networks = None
 
         print('sim proc '+str(self.idx)+' waiting at barrier ---------')
         write_to_log(' ACTOR #'+str(self.idx)+' WAITING AT SYNC WEIGHTS BARRIER...')

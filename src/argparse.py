@@ -132,7 +132,14 @@ def parse_cl_args():
                            help='data source for training or testing, either from SUMO traci or from perception in CARLA, default:sumo, options: sumo, carla')
 
     parser.add_argument("-sumo_detect", action='store_true', help='enable sumo to do perception, default: False')
-    parser.add_argument("-drl_att", action='store_true', help='enable sumo to do perception, default: False')
+    parser.add_argument("-att_model", type=str, default=None,
+                        choices=['drl', 'minPressure'],
+                        dest='att_model',
+                        help='attack model: "drl" uses the trained PPO attacker to select the target phase; '
+                             '"minPressure" uses a rule-based pressure heuristic. '
+                             'Omit to run without any attack. default: None')
+    parser.add_argument("-sdsm_defense", action='store_true', dest='sdsm_defense',
+                        help='enable SDSM consistency defense (occupancy-map cross-check), default: False')
     parser.add_argument('-detect_mode',
                            type=str,
                            choices=['CAV','CAV_real', 'CAV_w_intersection', 'intersection'],

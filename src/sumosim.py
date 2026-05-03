@@ -261,8 +261,8 @@ class SumoSim:
         #around the traffic signal controller
         v_data = self.conn.vehicle.getAllSubscriptionResults()
         lane_vehicles = {}
-        lane_vehicles_cv = {} #
-        lane_vehicles_uv = {} # 
+        lane_vehicles_cv = {} 
+        lane_vehicles_uv = {} 
         for v in v_data:
             lane = v_data[v][traci.constants.VAR_LANE_ID]
             # wz: note, here the lane could be the outgoing lane. So we will store vehicle info on outgoing lanes
@@ -423,12 +423,14 @@ class SumoSim:
 
 
     def create_tsc(self, eps, neural_networks = None):
-        self.tl_junc = self.get_traffic_lights() 
+        self.tl_junc = self.get_traffic_lights()
         if not neural_networks:
             neural_networks = {tl:None for tl in self.tl_junc}
         #create traffic signal controllers for the junctions with lights
-        self.tsc = { tl:tsc_factory(self.args.tsc, tl, self.args, self.netdata, neural_networks[tl], eps, self.conn)  
+        self.tsc = { tl:tsc_factory(self.args.tsc, tl, self.args, self.netdata, neural_networks[tl], eps, self.conn)
                      for tl in self.tl_junc }
+        # default empty attacker dict; populated by create_attacker() only when -drl_att is set
+        self.attacker = {tl+'_att': None for tl in self.tl_junc}
         
     def create_attacker(self, rl_stats, exp_replays, eps, neural_networks = None):
         self.tl_junc = self.get_traffic_lights() 
@@ -590,6 +592,28 @@ class SumoSim:
         return tsc_metrics
 
     def close(self):
+        # Finalize occupancy-map videos for all TSC agents that have one
+        # Guard: self.tsc is a string until create_tsc() has been called
+        if isinstance(self.tsc, dict):
+            for tsc in self.tsc.values():
+                if hasattr(tsc, 'omap_viz'):
+                    tsc.omap_viz.finalize()
+                if hasattr(tsc, '_defense_log') and tsc._defense_log:
+                    import csv, os, time as _time
+                    _defense_dir = os.path.join('exp_log', 'defense')
+                    os.makedirs(_defense_dir, exist_ok=True)
+                    ts = _time.strftime('%Y%m%d_%H%M%S')
+                    fpath = os.path.join(_defense_dir, f'trust_{tsc.id}_{ts}.csv')
+                    with open(fpath, 'w', newline='') as f:
+                        writer = csv.DictWriter(
+                            f, fieldnames=['t', 'fake_trust', 'real_min_trust',
+                                           'fake_weight', 'n_cav',
+                                           'total_claims', 'occupied_cells',
+                                           'n_type1', 'n_type2',
+                                           'penalized', 'all_cav_trust'])
+                        writer.writeheader()
+                        writer.writerows(tsc._defense_log)
+                    print(f'[SDSMDefense] Trust log saved → {fpath}')
         #self.conn.close()
         self.conn.close()
         self.sumo_process.terminate()

@@ -10,7 +10,7 @@ tsc_program=0 #1
 
 # additional param
 detect_r="-detect_r 200"
-nexp="-nreplay 1024" # 2000
+nexp="-nreplay 512" # 2000
 succ_detect_rate=100 #"-succ_detect_rate 100"
 # detect_range= #"-detect_range 80"
 r=""
@@ -22,7 +22,7 @@ n_step="-nsteps 1" # nstep=2 can not solve the delayed reward issue due to the P
 l="-l 1"
 batch="-batch 128"
 num_segments="-num_segments 3"
-simlen="-simlen 21000"
+simlen="-simlen 21000"   # 300 s for debug (was 21000)
 NOW="$(date +"%m-%d-%Y")"
  
 for k in 1 #2 3 4 5 6 7 8 #
@@ -33,16 +33,27 @@ do
   do
     for detect_range in 80 #60 100 #60 80 100
     do 
-      for i in 5 #1 3 5 8 10 30 50 # 
-      do
-        python3 run.py -sim $sim -tsc cavlight -nogui -gamma 0.999 -save  -updates $updates -pen_rate $i -flow_type $flow_type -temperature 100 -global_critic sep -tsc_program $tsc_program -turn_type $turn_type   $l $train_n $detect_r $gmax $num_segments $batch -marl sarl -all_veh_r $simlen -sumo_detect -detect_mode CAV -act_lp -detect_range $detect_range -succ_detect_rate $succ_detect_rate $gmin $nexp $n_step -act_ctm -save_u 5 # -load #-load_replay  #-decaying_eps -eps 0.5 #-load_replay # -no_random_flow 
-      done
+      # for i in 5 #1 3 5 8 10 30 50 # 
+      # do
+      #   python3 run.py -sim $sim -tsc cavlight -nogui -gamma 0.999 -save  -updates $updates -pen_rate $i -flow_type $flow_type -temperature 100 -global_critic sep -tsc_program $tsc_program -turn_type $turn_type   $l $train_n $detect_r $gmax $num_segments $batch -marl sarl -all_veh_r $simlen -sumo_detect -detect_mode CAV -act_lp -detect_range $detect_range -succ_detect_rate $succ_detect_rate $gmin $nexp $n_step -act_ctm -save_u 5 # -load #-load_replay  #-decaying_eps -eps 0.5 #-load_replay # -no_random_flow 
+      # done
 
-      for i in 5 #1 3 5 8 10 30 50 # 
+      for i in 1 3 5 10 #1 5 10 #1 3 5 8 10 30 50 #
       do
         for seed in 13 23 33 #43 53 63 #13 23 33 # ((j=1;j<=$test_round;j++));
         do
-          python3 run.py -sim $sim -tsc cavlight -nogui -load -mode test -updates $updates -pen_rate $i -flow_type $flow_type -temperature 100 -global_critic sep -tsc_program $tsc_program -turn_type $turn_type   $test_n $detect_r $gmax $num_segments -marl sarl  $simlen -sumo_detect -detect_mode CAV -no_random_flow -seed $seed -detect_range $detect_range -succ_detect_rate $succ_detect_rate $gmin $nexp $n_step -act_ctm #-act_lp # -record_position 
+          base_cmd="python3 run.py -sim $sim -tsc cavlight -nogui -load -mode test -updates $updates -pen_rate $i -flow_type $flow_type -temperature 100 -global_critic sep -tsc_program $tsc_program -turn_type $turn_type $test_n $detect_r $gmax $num_segments -marl sarl $simlen -sumo_detect -detect_mode CAV -no_random_flow -seed $seed -detect_range $detect_range -succ_detect_rate $succ_detect_rate $gmin $nexp $n_step -act_ctm"
+
+          # --- Baseline: no attack ---
+          # $base_cmd
+
+          # --- Attack, no defense ---
+          # $base_cmd -att_model drl
+          # $base_cmd -att_model minPressure
+
+          # --- Attack + SDSM defense ---
+          $base_cmd -att_model drl -sdsm_defense
+          $base_cmd -att_model minPressure -sdsm_defense
         done
       done
 

@@ -9,6 +9,8 @@ import traci
 
 from src.trafficsignalcontroller import TrafficSignalController
 from src.fake_veh_traj_gen import optimization_process
+from src.sdsm_defense import SDSMDefense
+from src.occupancy_map import OccupancyMapViz
 
 class NextPhaseRLTSC(TrafficSignalController):
     def __init__(self, conn, tsc_id, mode, netdata, red_t, yellow_t, green_t,g_max, rlagent, tsc_type, epsilon, eps_min, eps_factor, estimate_queue, num_segments, cong_thresh, detect_r, sync, all_veh_r, act_ctm, args):
@@ -114,7 +116,35 @@ class NextPhaseRLTSC(TrafficSignalController):
         self.num_opt_cnt = 0 
 
         self.t_fakeTraj_duration = 0
-    
+
+        # --- SDSM DEFENSE ---
+        junc_pos = (netdata['node'][tsc_id]['x'], netdata['node'][tsc_id]['y'])
+        self.sdsm_defense = SDSMDefense(
+            junction_pos=junc_pos,
+            detect_range=getattr(args, 'detec_range', 80.0))  # note: dest='detec_range' in argparse
+        self.fake_veh_weight = 1.0  # multiplier applied to fake vehicle counts
+        self.fake_cav_id = None
+        self.omap_viz = OccupancyMapViz(tsc_id=tsc_id, out_dir='exp_log/defense')
+        self._defense_log = []  # trust score trajectory: list of dicts
+
+        # Build CTM-lane-ID → SUMO-lane-ID mapping.
+        # CTM_phase_lane and self.phase_lanes share the same phase string keys.
+        # Both are sorted so index i of CTM list corresponds to index i of SUMO list.
+        self._ctm_to_sumo_lane = {}
+        for phase in self.CTM_phase_lane:
+            if phase in self.phase_lanes:
+                ctm_ls = sorted(self.CTM_phase_lane[phase])
+                sumo_ls = sorted(self.phase_lanes[phase])
+                if len(ctm_ls) != len(sumo_ls):
+                    print(f'[CTM→SUMO] WARNING phase "{phase}": count mismatch '
+                          f'ctm={ctm_ls} sumo={sumo_ls} — mapping all to first SUMO lane')
+                    for cl in ctm_ls:
+                        self._ctm_to_sumo_lane[cl] = sumo_ls[0]
+                else:
+                    for cl, sl in zip(ctm_ls, sumo_ls):
+                        self._ctm_to_sumo_lane[cl] = sl
+        # --- END SDSM DEFENSE ---
+
     def feature_to_phase(self, feature):
         range_dict = {(10, 12): 0,
                     (13, 15): 1,
@@ -266,12 +296,115 @@ class NextPhaseRLTSC(TrafficSignalController):
 
                 # Update the timestamp so we skip this block for the next ~9 steps (0.9s)
                 self.last_traj_update_idx = curr_t_idx
-            
+
             else:
                 # [SKIP] Reuse existing self.fake_traj_dict from previous call
                 pass
 
             # print("self.fake_traj_dict:", self.fake_traj_dict)
+
+            # ---------------------------------------------------------
+            # SDSM DEFENSE: cross-check fake vs real CAV reports
+            # ---------------------------------------------------------
+            if self.args.sdsm_defense:
+                _t0   = time.time()
+                _ftd  = getattr(self, 'fake_traj_dict', {})
+                _cavs = getattr(self, '_cav_ls', set())
+                if not _ftd or not _cavs:
+                    self.fake_veh_weight = 1.0
+                else:
+                    # Build live CAV position dict (query TraCI once per step)
+                    _t1 = time.time()
+                    cav_positions = {}
+                    for cav_id in _cavs:
+                        try:
+                            cav_positions[cav_id] = self.conn.vehicle.getPosition(cav_id)
+                        except Exception:
+                            pass  # vehicle departed
+                    _dt_traci = time.time() - _t1
+
+                    if not cav_positions:
+                        self.fake_veh_weight = 1.0
+                    else:
+                        _t2 = time.time()
+                        real_sdsm = self.sdsm_defense.build_real_sdsm(
+                            self.cv_data, cav_positions)
+                        _dt_real_sdsm = time.time() - _t2
+
+                        _t3 = time.time()
+                        fake_sdsm, fake_cav_id, fake_cav_pos = \
+                            self.sdsm_defense.build_fake_sdsm(
+                                _ftd, self.conn, self._ctm_to_sumo_lane)
+                        _dt_fake_sdsm = time.time() - _t3
+
+                        if not fake_sdsm:
+                            self.fake_veh_weight = 1.0
+                        else:
+                            self.fake_cav_id = fake_cav_id
+                            # Include the fake CAV's claimed position so the
+                            # defense evaluates it like any other broadcaster.
+                            # Type 1 now fires only if fake vehicles fall outside
+                            # its stated detect_range; Type 2 catches it when
+                            # nearby real CAVs fail to corroborate its reports.
+                            cav_positions_with_fake = {
+                                **cav_positions, fake_cav_id: fake_cav_pos}
+                            merged_sdsm = {**real_sdsm, **fake_sdsm}
+
+                            _t4 = time.time()
+                            trust_scores = self.sdsm_defense.run_defense(
+                                merged_sdsm, cav_positions_with_fake)
+                            _dt_run_defense = time.time() - _t4
+
+                            _t5 = time.time()
+                            self.fake_veh_weight = self.sdsm_defense.get_fake_weight(
+                                self.fake_cav_id)
+                            # Only consider trust scores of verified real CAVs
+                            # (those in cav_positions).  trust_scores contains ALL
+                            # ever-seen IDs including stale old fake_cav_ids whose
+                            # trust is 0 — including them pollutes real_min_trust.
+                            real_min = min(
+                                (trust_scores.get(k, 1.0) for k in cav_positions),
+                                default=1.0)
+                            stats = self.sdsm_defense.last_step_stats
+                            _dt_viz = 0.0
+                            if hasattr(self, 'omap_viz'):
+                                _t6 = time.time()
+                                self.omap_viz.render(
+                                    omap=self.sdsm_defense.omap,
+                                    cav_positions=cav_positions_with_fake,
+                                    trust_scores=trust_scores,
+                                    fake_cav_id=self.fake_cav_id,
+                                    fake_veh_weight=self.fake_veh_weight,
+                                    timestep=self.t)
+                                _dt_viz = time.time() - _t6
+
+                            _dt_total = time.time() - _t0
+                            print(f'[SDSMDefense t={self.t}] '
+                                  f'traci={_dt_traci*1e3:.1f}ms '
+                                  f'real_sdsm={_dt_real_sdsm*1e3:.1f}ms '
+                                  f'fake_sdsm={_dt_fake_sdsm*1e3:.1f}ms '
+                                  f'run_defense={_dt_run_defense*1e3:.1f}ms '
+                                  f'viz={_dt_viz*1e3:.1f}ms '
+                                  f'total={_dt_total*1e3:.1f}ms')
+                            self._defense_log.append({
+                                't': self.t,
+                                'fake_trust': trust_scores.get(self.fake_cav_id, 1.0),
+                                'real_min_trust': real_min,
+                                'fake_weight': self.fake_veh_weight,
+                                'n_cav': len(cav_positions),
+                                'total_claims': stats['total_claims'],
+                                'occupied_cells': stats['occupied_cells'],
+                                'n_type1': stats['n_type1'],
+                                'n_type2': stats['n_type2'],
+                                'penalized': str(stats['penalized']),
+                                'all_cav_trust': str({k: round(v, 3)
+                                                      for k, v in sorted(trust_scores.items())}),
+                            })
+            else:
+                self.fake_veh_weight = 1.0
+            # ---------------------------------------------------------
+            # END SDSM DEFENSE
+            # ---------------------------------------------------------
 
             # ---------------------------------------------------------
             # 1. STATE GENERATION
@@ -314,16 +447,16 @@ class NextPhaseRLTSC(TrafficSignalController):
             # ---------------------------------------------------------
             # 3. ACTUAL VICTIM RESPONSE (WITH ATTACK)
             # ---------------------------------------------------------
-            if self.acting:
+            if self.acting and self.attacker is not None:
                 # Apply the attack vector to generate the perturbed state
                 input_state = self.attacker.get_attacked_state(
-                    state[1], 
-                    self.att_action, 
-                    self.norm_CV, 
-                    self.norm_V_spd, 
-                    self.fake_vehicle_num, 
+                    state[1],
+                    self.att_action,
+                    self.norm_CV,
+                    self.norm_V_spd,
+                    self.fake_vehicle_num,
                     jsma_features = self.feature_ids
-                ) 
+                )
             else:
                 input_state = state[1].copy()
 
@@ -399,28 +532,29 @@ class NextPhaseRLTSC(TrafficSignalController):
                     phase_was_flip = self.phase_attack_successful
                     # ==========================
 
-                    # Send to Reward Function
+                    # Send to Reward Function (DRL attacker only)
                     # We pass 'phase_was_flip' as 'att_success_idx' to enable the Gate/Bonus
-                    r_delay, r_jsma = self.attacker.get_reward(
-                        old_exp['a'], 
-                        avg_delay, 
-                        old_exp['fake_veh_gen_rate'], 
-                        att_success_idx = 1 if phase_was_flip else 0, # <--- KEY CHANGE
-                        s_eff = old_exp['s_eff'],
-                        success_prob = 0.0,
-                        impact_factor = phase_avg_impact # <--- KEY CHANGE
-                    )
-
-                    if self.current_cycle_exp is not None:
-                         self.attacker.store_experience(
-                            old_exp['s'],        
-                            old_exp['a'],        
-                            self.current_cycle_exp['s'],          
-                            r_delay,        
-                            r_jsma,
-                            False,               
-                            old_exp['s_eff']  
+                    if self.attacker is not None:
+                        r_delay, r_jsma = self.attacker.get_reward(
+                            old_exp['a'],
+                            avg_delay,
+                            old_exp['fake_veh_gen_rate'],
+                            att_success_idx = 1 if phase_was_flip else 0,
+                            s_eff = old_exp['s_eff'],
+                            success_prob = 0.0,
+                            impact_factor = phase_avg_impact
                         )
+
+                        if self.current_cycle_exp is not None:
+                            self.attacker.store_experience(
+                                old_exp['s'],
+                                old_exp['a'],
+                                self.current_cycle_exp['s'],
+                                r_delay,
+                                r_jsma,
+                                False,
+                                old_exp['s_eff']
+                            )
                 
                 # RESET ACCUMULATORS FOR NEXT PHASE
                 self.cumulative_impact = 0.0
@@ -505,6 +639,11 @@ class NextPhaseRLTSC(TrafficSignalController):
             # ---------------------------------------------------------
             # 7. ATTACK GENERATION (New Cycle)
             # ---------------------------------------------------------
+            if self.attacker is None and getattr(self.args, 'att_model', None) != 'minPressure':
+                # No attacker instantiated and not using rule-based attack; skip attack entirely
+                self.last_tsc_action = action_idx
+                return next_phase
+
             if (action_idx == 0) or self.exceed_gmax:
                 self.end_of_Gmin = False
 
@@ -519,13 +658,27 @@ class NextPhaseRLTSC(TrafficSignalController):
                 next_phase_idx = self.curr_phase_idx 
                 self.CTM_est_state = np.concatenate( [self.CTM.get_state_CTM(int(self.CTM.t_next_Gmin_end)),  self.phase_to_one_hot[next_phase], np.array([next_phase_minG*10/self.g_max])])
 
-                # wo CTM: replace self.CTM_est_state with state[1]
-                att_state = self.attacker.get_state(state[1], self.CTM_est_state) 
-                # att_state = self.attacker.get_state(state[1], state[1]) 
-                
-                self.att_action = self.attacker.rlagent.get_action(att_state, self.epsilon, self.curr_phase_idx) 
+                if getattr(self.args, 'att_model', None) == 'minPressure':
+                    # Rule-based attack: use min-pressure heuristic to select target phase action
+                    phase_slices = [(10, 13), (13, 16), (16, 17), (17, 20)]
+                    s_start, s_end = phase_slices[self.curr_phase_idx]
+                    current_pressure = sum(self.CTM_est_state[s_start:s_end])
+                    max_other_pressure = max(
+                        sum(self.CTM_est_state[s:e])
+                        for i, (s, e) in enumerate(phase_slices)
+                        if i != self.curr_phase_idx
+                    )
+                    mp_action = 0 if current_pressure >= max_other_pressure else 1
+                    print(f"[minPressure] phase={self.curr_phase_idx} curr={current_pressure:.2f} max_other={max_other_pressure:.2f} action={mp_action}")
+                    self.att_action = [mp_action, None, None, mp_action, False]
+                    self.s = None
+                else:
+                    # DRL attacker: query the PPO agent for the target phase action
+                    # wo CTM: replace self.CTM_est_state with state[1]
+                    att_state = self.attacker.get_state(state[1], self.CTM_est_state)
+                    self.att_action = self.attacker.rlagent.get_action(att_state, self.epsilon, self.curr_phase_idx)
+                    self.s = att_state
 
-                self.s = att_state
                 self.a = self.att_action.copy()
                 
                 self.current_cycle_exp = {
