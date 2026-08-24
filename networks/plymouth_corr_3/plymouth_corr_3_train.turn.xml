@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<turns xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/turns_file.xsd">
+   <interval begin="0" end="3600">
+
+      <!-- ── Nixon intersection (62477148) ─────────────────────────────────── -->
+      <fromEdge id="897491919"> <toEdge id="897491918" probability="0.774"/> <toEdge id="441190742#0" probability="0.193"/> <toEdge id="8721314" probability="0.033"/> </fromEdge>
+      <fromEdge id="-897491918"> <toEdge id="-897491919" probability="0.880"/> <toEdge id="8721314" probability="0.016"/> <toEdge id="441190742#0" probability="0.104"/> </fromEdge>
+      <fromEdge id="-8721314"> <toEdge id="441190742#0" probability="0.362"/> <toEdge id="-897491919" probability="0.448"/> <toEdge id="897491918" probability="0.190"/> </fromEdge>
+      <fromEdge id="-441190742#0"> <toEdge id="8721314" probability="0.051"/> <toEdge id="897491918" probability="0.526"/> <toEdge id="-897491919" probability="0.423"/> </fromEdge>
+
+      <!-- ── Huron intersection (62500824) ──────────────────────────────────── -->
+      <!-- EB approach (412646493, from west x=646→Huron): Plymouth_East T=826/1017=0.812, L=12/1017=0.012, R=179/1017=0.176 -->
+      <fromEdge id="412646493"> <toEdge id="222786843" probability="0.812"/> <toEdge id="-142178743" probability="0.012"/> <toEdge id="478958406" probability="0.176"/> </fromEdge>
+      <!-- WB approach (-222786843, from east x=777→Huron): Plymouth_West T=773/1087=0.711, L=205/1087=0.189, R=109/1087=0.100 -->
+      <fromEdge id="-222786843"> <toEdge id="-412646493" probability="0.711"/> <toEdge id="478958406" probability="0.189"/> <toEdge id="-142178743" probability="0.100"/> </fromEdge>
+      <fromEdge id="478958407"> <toEdge id="-142178743" probability="0.525"/> <toEdge id="-412646493" probability="0.444"/> <toEdge id="222786843" probability="0.031"/> </fromEdge>
+      <fromEdge id="142178743"> <toEdge id="478958406" probability="0.343"/> <toEdge id="222786843" probability="0.280"/> <toEdge id="-412646493" probability="0.377"/> </fromEdge>
+
+      <!-- ── Western intersection (62532012) — calibrated from field counts ──
+           WB approach (-441190747): WT=1022/1055=0.96872 → E1 (Plymouth-west, straight), WL=33/1055=0.03128 → E0 (Traverwood-north, left), WR=0 (no right turn)
+           SB approach (-E0): SL=68/180=0.377778 → 441190747 (east), SR=112/180=0.622222 → E1 (SW)
+           EB approach (-E1): EL=56/950=0.058947 → E0 (NW), ET=894/950=0.941053 → 441190747 (east)
+      -->
+      <fromEdge id="-441190747"> <toEdge id="E1" probability="0.96872"/> <toEdge id="E0" probability="0.03128"/> </fromEdge>
+      <fromEdge id="-E0"> <toEdge id="441190747" probability="0.377778"/> <toEdge id="E1" probability="0.622222"/> </fromEdge>
+      <fromEdge id="-E1"> <toEdge id="E0" probability="0.058947"/> <toEdge id="441190747" probability="0.941053"/> </fromEdge>
+
+      <!-- ── NW branch through-junction (J0) ───────────────────────────────── -->
+      <fromEdge id="E0">  <toEdge id="E4"  probability="1.000"/> </fromEdge>
+      <fromEdge id="-E4"> <toEdge id="-E0" probability="1.000"/> </fromEdge>
+
+      <!-- ── SW branch through-junctions (J1, J2) ─────────────────────────── -->
+      <fromEdge id="E1">  <toEdge id="E2"  probability="1.000"/> </fromEdge>
+      <fromEdge id="-E2"> <toEdge id="-E1" probability="1.000"/> </fromEdge>
+      <fromEdge id="E2">  <toEdge id="E3"  probability="1.000"/> </fromEdge>
+      <fromEdge id="-E3"> <toEdge id="-E2" probability="1.000"/> </fromEdge>
+
+   </interval>
+</turns>

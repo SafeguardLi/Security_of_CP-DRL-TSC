@@ -1,3 +1,4 @@
+import os
 import numpy as np
 from src.rlagent import RLAgent
 from src.jsma import init_attack
@@ -16,7 +17,9 @@ class A2CAgent(RLAgent):
         self.global_critic = main_args.global_critic 
         self.attack_flag = False
     
-    def init_attacker(self):
+    def init_attacker(self, input_dim=None, classifier_path=None):
+        if self.attack_flag:
+            return  # idempotent — only initialize once
         self.jsma_params = {
                     "theta": 1.0,
                     "gamma": 0.1,
@@ -24,9 +27,45 @@ class A2CAgent(RLAgent):
                     "clip_max": 1.0,
                     "y_target": None,
                 }
-        self.jsma, self.classifier = init_attack(self.networks['actor'], self.jsma_params)
-
-        self.attack_flag = True  
+        if input_dim is None:
+            input_dim = 26  # Plymouth default
+        # White-box attack: JSMA targets the real cavlight actor directly, not a
+        # surrogate binary classifier. The surrogate was only for the isolated-TSC
+        # case where the victim model was not accessible.
+        # Correctness requirement: the actor MUST hold trained weights. Without
+        # -load it keeps random init and the white-box attack is meaningless.
+        if not getattr(self.main_args, 'load', False):
+            raise RuntimeError(
+                f"White-box JSMA on TSC {self.tsc_id}: actor is not loaded "
+                f"(args.load is False). The victim would be a random-weight model, "
+                f"making the attack meaningless. Run with -load -tsc_updates <N>."
+            )
+        # Restrict JSMA to the CV-count block of state[1] (only features that fake
+        # vehicles can move). state[1] = avg_speed(avg_len) + cv_count(avg_len) +
+        # phase_one_hot(n_phases+1) + progress(1), with avg_len = (n_phases-1)*s+1.
+        # Recover avg_len from input_dim so the range is correct per geometry:
+        #   4-phase (input_dim=26) -> (10, 20);  2-phase (input_dim=12) -> (4, 8).
+        feature_range = (10, 21)
+        s = int(getattr(self.main_args, 'num_segments', 3))
+        n_phases = int(round((input_dim + 2 * s - 4) / (2 * s + 1)))
+        avg_len = (n_phases - 1) * s + 1
+        if avg_len >= 1 and 2 * avg_len <= input_dim:
+            feature_range = (avg_len, 2 * avg_len)
+        sur_dir = getattr(self.main_args, 'surrogate_dir', None)
+        if sur_dir:
+            # BLACKBOX: JSMA (get_advX) and the surrogate classifier (surrogate_act decisions) come
+            # from the trained per-intersection surrogate, NOT the real actor. The real TSC still
+            # decides via get_action(..., surrogate_act=False).
+            import os
+            cpath = os.path.join(sur_dir, f"{self.tsc_id}_surrogate.pt")
+            self.jsma, self.classifier = init_attack(None, self.jsma_params,
+                                                     input_dim=input_dim, white_box=False,
+                                                     classifier_path=cpath, feature_range=feature_range)
+        else:
+            self.jsma, self.classifier = init_attack(self.networks['actor'], self.jsma_params,
+                                                     input_dim=input_dim, white_box=True,
+                                                     feature_range=feature_range)
+        self.attack_flag = True
 
     def get_advX(self,state, curr_phase, att_action):
         state_cp = state.copy()
@@ -34,7 +73,8 @@ class A2CAgent(RLAgent):
         # attack_scale = att_action[-2]
 
         if not self.attack_flag:
-            self.init_attacker()
+            # lazy init: use actual state dim (handles corr3 where dim != 26)
+            self.init_attacker(input_dim=state_cp.shape[-1])
         
         # # define target action based on rule
         # action_pair = {0: 1,  # current SB, next NB, stay
@@ -65,6 +105,9 @@ class A2CAgent(RLAgent):
         _q_values = np.zeros((1,self.networks['actor'].output_d))
         # _advantage = np.zeros((1,1))
         if surrogate_act:
+            if not self.attack_flag:
+                # lazy init: state_real_cv has same dim as classifier input
+                self.init_attacker(input_dim=state.shape[-1])
             # action_dist = self.classifier.predict(state[np.newaxis, ...])
             x_torch = state[np.newaxis, ...].astype(np.float32) #torch.tensor().to(torch.float32)
             action_dist = self.classifier.predict(x_torch) #self.networks['actor'].forward(adv_x[np.newaxis, ...],_sample_actions, _q_values,'online')

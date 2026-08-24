@@ -72,6 +72,7 @@ class SumoSim:
                 self.global_metric_args = []
         self.global_traffic_metrics = GlobalTrafficMetrics(netdata, self.global_metric_args, self.args.mode)
 
+        # Yaxing
         print(idx) # wz: idx is the index of thread
         check_and_make_dir('./runtime')
         self.cwd = './runtime/' + str(idx) + '/'
@@ -88,11 +89,16 @@ class SumoSim:
             self.cfg_fp = self.cwd + f'{self.args.sim}.sumocfg'
         else:
             copy2(f'./networks/{self.args.sim}/{self.args.sim}.net.xml', self.cwd)
-            # copy2(f'./networks/{self.args.sim}/{self.args.sim}_{self.args.flow_type}_{self.args.mode}.flow.xml', self.cwd)
-            # copy2(f'./networks/{self.args.sim}/{self.args.sim}_{self.args.turn_type}_{self.args.mode}.turn.xml', self.cwd)
             copy2(f'./networks/{self.args.sim}/{self.args.sim}_{self.args.mode}.rou.xml', self.cwd)
             copy2(f'./networks/{self.args.sim}/{self.args.sim}_{self.args.mode}.sumocfg', self.cwd)
             copy2(f'./networks/{self.args.sim}/{self.args.sim}_sourcenode.additional.xml', self.cwd)
+            # copy additional files referenced in sumocfg if they exist
+            import os as _os
+            for _extra in [f'./networks/{self.args.sim}/{self.args.sim}_{self.args.mode}.turn.xml',
+                           f'./networks/{self.args.sim}/{self.args.sim}.sinks.xml',
+                           f'./networks/{self.args.sim}/{self.args.sim}_loops.add.xml']:  # CTM source-inflow loop detectors (corr3)
+                if _os.path.exists(_extra):
+                    copy2(_extra, self.cwd)
 
             self.cfg_fp = self.cwd + f'{self.args.sim}_{self.args.mode}.sumocfg'
         
@@ -108,7 +114,7 @@ class SumoSim:
 
     def gen_con_veh(self):
         '''
-        get the subscription of all vehicles and filter a portion of them as CVs
+        wangzhi: get the subscription of all vehicles and filter a portion of them as CVs
         v_data: id of all newly departed vehicles
         :return: a list of ids of CVs
         '''
@@ -261,8 +267,8 @@ class SumoSim:
         #around the traffic signal controller
         v_data = self.conn.vehicle.getAllSubscriptionResults()
         lane_vehicles = {}
-        lane_vehicles_cv = {} 
-        lane_vehicles_uv = {} 
+        lane_vehicles_cv = {} # wz: cv
+        lane_vehicles_uv = {} # Ujwal: uv
         for v in v_data:
             lane = v_data[v][traci.constants.VAR_LANE_ID]
             # wz: note, here the lane could be the outgoing lane. So we will store vehicle info on outgoing lanes
@@ -433,12 +439,25 @@ class SumoSim:
         self.attacker = {tl+'_att': None for tl in self.tl_junc}
         
     def create_attacker(self, rl_stats, exp_replays, eps, neural_networks = None):
-        self.tl_junc = self.get_traffic_lights() 
+        self.tl_junc = self.get_traffic_lights()
+        shared = getattr(self.args, 'shared_att', False)
+        target = getattr(self.args, 'att_target', '')
+        # shared attacker: every intersection's attacker object references the SAME
+        # network/replay/stats under key 'shared_att'. Otherwise per-intersection keys.
+        def akey(tl):
+            return 'shared_att' if shared else tl + '_att'
         if not neural_networks:
-            neural_networks = {tl+'_att':None for tl in self.tl_junc}
+            neural_networks = {akey(tl): None for tl in self.tl_junc}
         # WZ: hard code ppo_att as attacker for now, self.args.att_type
-        self.attacker = { tl+'_att':att_factory("ppo_att", tl, self.args, self.netdata, rl_stats[tl+'_att'], exp_replays[tl+'_att'], neural_networks[tl+'_att'], eps, self.conn)  
-                     for tl in self.tl_junc }
+        self.attacker = {}
+        for tl in self.tl_junc:
+            # test-only deploy-to-one: only att_target gets an attacker; others benign (None)
+            if self.args.mode == 'test' and target and tl != target:
+                self.attacker[tl + '_att'] = None
+                continue
+            self.attacker[tl + '_att'] = att_factory("ppo_att", tl, self.args, self.netdata,
+                                                     rl_stats[akey(tl)], exp_replays[akey(tl)],
+                                                     neural_networks[akey(tl)], eps, self.conn)
 
     def update_netdata(self):
         tl_junc = self.get_traffic_lights()
@@ -520,23 +539,38 @@ class SumoSim:
             #     self.action_hist[t] = self.tsc[t].action_record
 
         if self.args.mode == "test":
-            if self.args.tsc in ["cavlight","mmitiss"]:
+            if self.args.tsc in ["cavlight","mmitiss","presslight"]:
                 for tl_id in self.tl_junc:
                     fp = '/'.join(['state_action_record']+[str(tl_id)]) + '/'
                     SA_fp = get_fp(self.args, fp)
                     check_and_make_dir(SA_fp)
-                    save_data(SA_fp +str(get_time_now())+ '_state_action_record.p', self.tsc[tl_id].state_action_record) # TODO: output info. refer to traffic metrics
-                    save_data(SA_fp +str(get_time_now())+ '_JSMA.p', self.tsc[tl_id].JSMA_result)
-                    save_data(SA_fp +str(get_time_now())+ '_attack_phase_dist.p', self.tsc[tl_id].attack_phase_dist)
-                    save_data(SA_fp +str(get_time_now())+ '_fake_traj_input.p', self.tsc[tl_id].fake_veh_traj_input)
-                    save_data(SA_fp +str(get_time_now())+ '_CTM_cmp.p', self.tsc[tl_id].CTM_state_cmp)
+                    # getattr-guarded: the benign presslight controller (NextPhasePressLightTSC) is a
+                    # light class that only has state_action_record + sa_collect (for -collect_sa); the
+                    # attack-only records (JSMA/attack_phase_dist/fake_traj/CTM_cmp) exist only on the RL
+                    # attack controller. Missing -> save an empty list instead of AttributeError.
+                    _tsc = self.tsc[tl_id]
+                    save_data(SA_fp +str(get_time_now())+ '_state_action_record.p', getattr(_tsc, 'state_action_record', []))
+                    if getattr(self.args, 'collect_sa', False):
+                        save_data(SA_fp +str(get_time_now())+ '_surrogate_data.p', getattr(_tsc, 'sa_collect', []))
+                    save_data(SA_fp +str(get_time_now())+ '_JSMA.p', getattr(_tsc, 'JSMA_result', []))
+                    save_data(SA_fp +str(get_time_now())+ '_attack_phase_dist.p', getattr(_tsc, 'attack_phase_dist', []))
+                    save_data(SA_fp +str(get_time_now())+ '_fake_traj_input.p', getattr(_tsc, 'fake_veh_traj_input', []))
+                    save_data(SA_fp +str(get_time_now())+ '_CTM_cmp.p', getattr(_tsc, 'CTM_state_cmp', []))
+                    save_data(SA_fp +str(get_time_now())+ '_ctm_pred_log.p', getattr(_tsc, 'ctm_pred_log', []))
+                    save_data(SA_fp +str(get_time_now())+ '_attack_deviation.p', getattr(_tsc, 'attack_deviation', []))
+                    save_data(SA_fp +str(get_time_now())+ '_flip_sequence.p', getattr(_tsc, 'flip_sequence', []))
+                    save_data(SA_fp +str(get_time_now())+ '_opt_diag.p', getattr(_tsc, 'opt_diag', []))
                     # save_data(SA_fp +str(get_time_now())+ '_features_cmp.p', self.tsc[tl_id].features_cmp)
                     # save_data(SA_fp +str(get_time_now())+ '_CTM_state_collect_debug_cmp.p', self.tsc[tl_id].CTM_state_collect_debug)
                     print("Successfully store state and action for visualization")
         
             if self.args.act_ctm:
                 for tl_id in self.tl_junc:
-                    self.tsc[tl_id].CTM.viz_CTM_matrix(int(self.t//10),str(get_time_now())+tl_id)
+                    # viz is a non-essential debug plot; never let it crash the sim/test.
+                    try:
+                        self.tsc[tl_id].CTM.viz_CTM_matrix(int(self.t//10),str(get_time_now())+tl_id)
+                    except Exception as _viz_err:
+                        print(f"[viz_CTM_matrix skipped for {tl_id}: {_viz_err}]")
                     self.tsc[tl_id].CTM.save_nvlist(int(self.t//10),str(get_time_now())+tl_id) # for CTM FD validation
                     # self.tsc[tl_id].CTM.save_OPT_input(str(get_time_now())+tl_id)
             # self.velo_hist_all[t] = self.tsc[t].historic_velocity

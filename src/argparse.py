@@ -103,6 +103,9 @@ def parse_cl_args():
     parser.add_argument("-n_hidden", type=int, default=2, dest='n_hidden', help='neural network hidden layer scaling factor, default: 2; for presslight-a2c, it is the number of layers')
     
     parser.add_argument("-save_path", type=str, default='saved_models', dest='save_path', help='dir to save neural network weights, default: saved_models')
+    parser.add_argument("-shared_att", default=False, action='store_true', dest='shared_att', help='centralized/generalized attacker: one shared attacker network over the canonical padded state, trained on merged experience from all intersections')
+    parser.add_argument("-att_target", type=str, default='', dest='att_target', help='test-only: deploy the (shared) attacker at ONLY this intersection id; others run benign. Empty = attacker on all intersections')
+    parser.add_argument("-inc_only_attack", default=False, action='store_true', dest='inc_only_attack', help='PressLight attack: restrict JSMA to the INCOMING block [0:A] only (spoof approaching CVs); exclude the OUT block (downstream-lane spoofing). Conservative threat model / out-injection ablation.')
     parser.add_argument("-save_replay", type=str, default='saved_replays', dest='save_replay', help='dir to save experience replays, default: saved_replays')
     parser.add_argument("-load_replay", default=False, action='store_true', dest='load_replay', help='load experience replays if they exist')
 
@@ -133,13 +136,108 @@ def parse_cl_args():
 
     parser.add_argument("-sumo_detect", action='store_true', help='enable sumo to do perception, default: False')
     parser.add_argument("-att_model", type=str, default=None,
-                        choices=['drl', 'minPressure'],
+                        choices=['drl', 'minPressure', 'random'],
                         dest='att_model',
-                        help='attack model: "drl" uses the trained PPO attacker to select the target phase; '
-                             '"minPressure" uses a rule-based pressure heuristic. '
-                             'Omit to run without any attack. default: None')
+                        help='attack model / target-phase selector (all share the JSMA+injection pipeline): '
+                             '"drl" = trained PPO attacker; "minPressure" = rule-based pressure heuristic '
+                             '(switch away from the highest-pressure phase); "random" = uniform-random target '
+                             '(baseline). Omit to run without any attack. default: None')
     parser.add_argument("-sdsm_defense", action='store_true', dest='sdsm_defense',
                         help='enable SDSM consistency defense (occupancy-map cross-check), default: False')
+    parser.add_argument("-jsma_no_fallback", action='store_true', dest='jsma_no_fallback',
+                        help='when JSMA finds no features, SKIP injection (s_eff=0 -> penalty) '
+                             'instead of using the heuristic phase-fallback. default: False')
+    parser.add_argument("-collect_sa", action='store_true', dest='collect_sa',
+                        help='during benign test, log (state[1], action_dist, action_idx) per '
+                             'intersection to _surrogate_data.p for surrogate (blackbox) training. '
+                             'default: False')
+    parser.add_argument("-surrogate_dir", type=str, default=None, dest='surrogate_dir',
+                        help='dir holding trained <tsc>_surrogate.pt. When set, JSMA analyzes the '
+                             'SURROGATE (blackbox) instead of the real actor; the real TSC still '
+                             'decides. default: None (white-box)')
+    parser.add_argument("-tsc_surrogate", action='store_true', dest='tsc_surrogate',
+                        help='route the TSC benign DECISION through the surrogate (surrogate_act) '
+                             'instead of the real actor, to check the surrogate as a controller '
+                             '(tripinfo). Requires -surrogate_dir. default: False')
+    parser.add_argument("-out_leave_speed", type=float, default=0.0, dest='out_leave_speed',
+                        help='-traj_gen OUTGOING-lane fake-vehicle leaving speed (m/s). 0 = lane '
+                             'free-flow speed. In a corridor the downstream is another signal, so a '
+                             'LOW speed (queued departure) is realistic and keeps spoofed vehicles on '
+                             'the lane longer -> higher sustained out-count. Sweep to measure the '
+                             'attack impact vs leaving speed. default: 0 (free-flow)')
+    parser.add_argument("-traj_gen", action='store_true', dest='traj_gen',
+                        help='ENABLE the vehicle-trajectory-generation module (Gurobi optimizer) for '
+                             'corr3: fake vehicles follow physically-realistic kinematic trajectories '
+                             'instead of static target-position placement. default: False (static).')
+    parser.add_argument("-ctm_vf", type=float, default=0.0, dest='ctm_vf',
+                        help='CTM free-flow-speed recalibration (m/s). The built-in corr3 CTM uses '
+                             'v_f=17.88, ~14%% above the real network median (~15.65), which makes '
+                             'the CTM propagate/discharge vehicles too fast -> systematic UNDER-'
+                             'prediction (near-segment worst). Setting -ctm_vf <real_vf> scales the '
+                             'free-flow SENDING term by (ctm_vf/v_f) so effective propagation matches '
+                             'reality, WITHOUT changing delta_x/cell geometry/detection. 0 = off '
+                             '(no change). Try 15.65. default: 0')
+    parser.add_argument("-inject_drop_rate", type=float, default=0.0, dest='inject_drop_rate',
+                        help='DIAGNOSTIC: randomly DROP this fraction of feature injections (set to {}) '
+                             'per decision, to match trajgen\'s Gurobi failure frequency. Run STATIC '
+                             'with -inject_drop_rate 0.54: still high impact => PERSISTENCE was the '
+                             'driver (few frozen injections suffice); collapses to ~benign => FREQUENCY. '
+                             'default: 0 (no drop).')
+    parser.add_argument("-opt_fallback", action='store_true', dest='opt_fallback',
+                        help='DIAGNOSTIC: under -traj_gen, when the incoming Gurobi optimizer fails '
+                             '(infeasible -> {}), fall back to placing the fakes at their TARGET '
+                             'positions (frozen, static-style) so trajgen injects on EVERY '
+                             'JSMA-success decision. Tests whether injection FREQUENCY (the ~54%%% '
+                             'Gurobi failures) is what makes trajgen weak. NOT physically realizable.')
+    parser.add_argument("-out_trail", action='store_true', dest='out_trail',
+                        help='trajgen out-injection: use PER-TIMESTEP ids so the green cache accumulates '
+                             'a DENSE TRAIL of every position the out-queue visited (faithful to the '
+                             'isolated optimization_process behavior) instead of a bounded standing '
+                             'queue (consistent ids). Stronger sustained out-signal, but can exceed jam '
+                             'density on short lanes -> over-saturation. Only under -traj_gen. default: False.')
+    parser.add_argument("-future_jsma", action='store_true', dest='future_jsma',
+                        help='corr3 attack timeline fix: run JSMA on the CTM-projected FUTURE '
+                             'victim state at the next decision time (t_next_Gmin_end) instead of '
+                             'the CURRENT observed state[1]. Restores the e9bd9b9/NDSS timeline '
+                             '(CTM estimates future state -> JSMA targets it -> trajectory realizes '
+                             'the fakes to arrive by that decision). default: False (current state).')
+    parser.add_argument("-opt_dynamic_n", action='store_true', dest='opt_dynamic_n',
+                        help='trajgen feasibility: when optimization_process returns {} (infeasible), '
+                             'retry with FEWER fake vehicles (drop one from the densest same-lane group '
+                             'each round) until it solves or hits a floor. Converts a total injection '
+                             'failure (esp. GREEN-phase, ~0.09 success: fast heterogeneous-speed fakes '
+                             'packed into 5 m headway slots) into a PARTIAL injection. default: False.')
+    parser.add_argument("-fake_spacing", type=float, default=5.0, dest='fake_spacing',
+                        help='trajgen: target/initial spacing (meters) between adjacent same-lane fake '
+                             'vehicles (assign_spot offset + adjust_ini_pos min-gap). Wider spacing gives '
+                             'the fixed-order headway constraint slack to absorb per-vehicle speed '
+                             'differences (the green-phase gap-collapse). default: 5.0 (original).')
+    parser.add_argument("-fake_spd_cap", type=float, default=0.0, dest='fake_spd_cap',
+                        help='trajgen: cap the fakes\' TARGET speed (m/s) at this value (0 = no cap). '
+                             'On a served (green) approach get_fake_veh_final_state returns ~free-flow '
+                             '17.88; capping injects gentler "slowing/forming-queue" fakes whose more '
+                             'parallel trajectories satisfy headway -> higher green feasibility. default: 0.')
+    parser.add_argument("-opt_init_spd_match", action='store_true', dest='opt_init_spd_match',
+                        help='trajgen feasibility #1: set each fake\'s INITIAL speed = its TARGET speed '
+                             '(get_initial_fake_state) instead of a hard-coded 17.88 m/s. A fake heading '
+                             'into a standing queue is realistically already slowed, so it no longer has '
+                             'to burn a full 17.88->0 deceleration -> removes the rear-catches-stopped-front '
+                             'headway collapse at its source (the low-fspd failure). Physically MORE '
+                             'realistic; does not break trajectory validity. default: False (17.88).')
+    parser.add_argument("-opt_acc_low", type=float, default=-3.5, dest='opt_acc_low',
+                        help='trajgen feasibility #2: deceleration lower bound (m/s^2) passed to the '
+                             'optimizer. Default -3.5 is comfort braking; real emergency braking is '
+                             '-6..-8. Setting e.g. -opt_acc_low -5 lets a fake reach a stopped target '
+                             'sooner, shrinking the window where a rear fake overruns a stopped front '
+                             'one -> higher feasibility, still physical. default: -3.5.')
+    parser.add_argument("-marginal_delay", action='store_true', dest='marginal_delay',
+                        help='reward the delay INCREASE vs a running benign baseline (signed) '
+                             'instead of absolute delay, so delay-reducing attacks are '
+                             'penalized. default: False')
+    parser.add_argument("-force_flip", action='store_true', dest='force_flip',
+                        help='DIAGNOSTIC: bypass JSMA/injection and force the victim to take '
+                             'the attacker''s requested target action directly, to isolate the '
+                             'reward/policy from the JSMA pipeline. default: False')
     parser.add_argument('-detect_mode',
                            type=str,
                            choices=['CAV','CAV_real', 'CAV_w_intersection', 'intersection'],
@@ -151,6 +249,9 @@ def parse_cl_args():
 
     parser.add_argument("-max_attack_scale", type=int, default= 15, dest='max_attack_scale',
                         help='scale of attack, i.e. maximum num of fake veh to be insert, default: 15')
+    parser.add_argument("-fake_veh_scale", type=float, default=1.0, dest='fake_veh_scale',
+                        help='multiplier on fake-vehicle injection strength (fake_veh_weight). '
+                             '>1 = stronger injection to cross the DQN Q-margin. Default 1.0 (no change).')
 
     args = parser.parse_args()
     # if args.tsc == 'actuated':

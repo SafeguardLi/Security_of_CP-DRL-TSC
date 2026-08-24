@@ -1,0 +1,5 @@
+id=62532012 pid=1152261 updated=2026-08-17 14:46:29 t_sim=17651
+num_JSMA=56 failed_JSMA=11 fail_rate=0.196
+total_flip(clean!=realized)=42 flip_rate=0.750
+REQ(target!=clean)=39 REQ_realized(action==target)=30 realized_rate=0.769
+Qmargin_to_target clean=-1.0000 attacked=0.5500 (need >0 to flip; n=39)

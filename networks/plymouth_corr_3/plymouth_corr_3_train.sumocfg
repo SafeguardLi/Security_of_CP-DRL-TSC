@@ -1,0 +1,29 @@
+<configuration>
+    <input>
+        <net-file value="plymouth_corr_3.net.xml" />
+        <route-files value="plymouth_corr_3_train.rou.xml" />
+        <additional-files value="plymouth_corr_3_train.turn.xml,plymouth_corr_3.sinks.xml,plymouth_corr_3_loops.add.xml" />
+    </input>
+
+    <gui_only>
+        <tracker-interval value="0.1"/>
+        <start value="true"/>
+    </gui_only>
+
+    <time>
+        <begin value="0"/>
+        <end value="3600"/>
+        <step-length value="0.1"/>
+    </time>
+
+    <processing>
+        <lateral-resolution value="0.1"/>
+        <collision.action value="warn"/>
+        <ignore-route-errors value="true"/>
+
+        <device.rerouting.probability value="1.0"/>
+        <device.rerouting.period value="0"/>
+        <device.rerouting.pre-period value="0"/>
+    </processing>
+
+</configuration>

@@ -33,12 +33,16 @@ class SaliencyMapMethod(EvasionAttack):
         gamma: float = 1,
         batch_size: int = 1,
         verbose: bool = True,
+        feature_range: tuple = (10, 21),
     ) -> None:
         super().__init__(estimator=classifier)
         self.theta = theta
         self.gamma = gamma
         self.batch_size = batch_size
         self.verbose = verbose
+        # [lo, hi) index range JSMA is allowed to perturb — the CV-count block of
+        # the victim state. Differs per intersection (4-phase: 10-19; 2-phase: 4-7).
+        self.feature_range = feature_range
         self._check_params()
 
     def generate(self, x: np.ndarray, y: Optional[np.ndarray] = None, **kwargs) -> np.ndarray:
@@ -48,8 +52,9 @@ class SaliencyMapMethod(EvasionAttack):
         dims = list(x.shape[1:])
         self._nb_features = np.product(dims)
         x_adv = np.reshape(x.astype(ART_NUMPY_DTYPE), (-1, self._nb_features))
-        x_torch = torch.tensor(x).to(torch.float32)
-        preds = np.argmax(self.estimator.predict(x_torch, batch_size=self.batch_size), axis=1)
+        # Pass numpy (not a torch tensor): the estimator may be a KerasClassifier
+        # (white-box actor) or a PyTorchClassifier (legacy surrogate).
+        preds = np.argmax(self.estimator.predict(x.astype(ART_NUMPY_DTYPE), batch_size=self.batch_size), axis=1)
 
         # Initialize variable to store the final pair of indices
         final_pair = np.array([])
@@ -66,9 +71,10 @@ class SaliencyMapMethod(EvasionAttack):
             batch_index_1, batch_index_2 = batch_id * self.batch_size, (batch_id + 1) * self.batch_size
             batch = x_adv[batch_index_1:batch_index_2]
 
-            # 1. HARD CONSTRAINT: Strictly limit search space to indices 10 to 20
+            # 1. HARD CONSTRAINT: Strictly limit search space to the CV-count block
+            lo, hi = self.feature_range
             search_space = np.zeros(batch.shape)
-            search_space[:, 10:21] = 1 
+            search_space[:, lo:hi] = 1
 
             if self.estimator.clip_values is not None:
                 clip_min, clip_max = self.estimator.clip_values

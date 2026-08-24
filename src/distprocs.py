@@ -49,18 +49,21 @@ class DistProcs:
         sim.close()
 
         tsc_ids = netdata['inter'].keys()
+        # Centralized/generalized attacker: one logical 'shared' agent instead of
+        # one per intersection. Its key is 'shared_att' (mirrors '{tsc}_att').
+        agent_keys = ['shared'] if getattr(args, 'shared_att', False) else list(tsc_ids)
 
         if mode in ['train','test']:
-            rl_stats = self.create_mp_stats_dict(tsc_ids)
-            exp_replays = self.create_mp_exp_replay(tsc_ids)           
-        
+            rl_stats = self.create_mp_stats_dict(agent_keys)
+            exp_replays = self.create_mp_exp_replay(agent_keys)
+
         eps_rates = self.get_exploration_rates(args.eps, args.n, args.mode, args.sim)
         offsets = self.get_start_offsets(args.mode, args.sim_len, args.offset, args.n)
 
         sim_procs = [ SimProc(i, args, barrier, netdata, rl_stats, exp_replays, eps_rates[i], offsets[i]) for i in range(args.n)]
 
         if args.l > 0:
-            learner_agents = self.assign_learner_agents( tsc_ids, args.l) 
+            learner_agents = self.assign_learner_agents( agent_keys, args.l)
             print('===========LEARNER AGENTS')
             for l in learner_agents:
                 print('============== '+str(l))
@@ -90,6 +93,8 @@ class DistProcs:
                 path_dirs = [self.args.save_path, 'critic']
                 models_path = get_fp(self.args, '/'.join(path_dirs))
                 models = [f for f in os.listdir(models_path) if f.endswith('.pt')]
+                if getattr(self.args, 'shared_att', False):
+                    models = [m for m in models if m.startswith('shared_att')]  # ignore old per-TSC ckpts
                 if models:
                     updates = max([int(model.split('.')[0].split('_')[-1]) for model in models])
             except (FileNotFoundError, ValueError):

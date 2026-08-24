@@ -258,17 +258,112 @@ class NextPhaseAttacker(TrafficSignalAttacker):
     def get_state(self, tsc_state, CTM_state):
         return np.concatenate([tsc_state, CTM_state])
 
-    def get_reward(self, attacker_action, total_delay, fake_veh_gen_rate, att_success_idx, s_eff, success_prob=0.0, impact_factor=0.0):
+    def canonicalize_state(self, tsc_state, CTM_state, P_MAX=4, K_MAX=4, include_ctm=True, n_app=None):
+        """Pad the per-intersection attacker state into a geometry-agnostic canonical
+        vector so ONE shared attacker network can train/deploy across intersections
+        with different #phases and #approaches.
+
+        include_ctm=True  (cavlight): actor state[1] block + CTM block + geometry (46-dim).
+        include_ctm=False (presslight, phase-based pressure state): the attacker observes
+          the per-phase [inc(A), out(P), phase_onehot(P+1), time(1)] block; there is no CTM
+          — canonical = [inc(A_MAX), out(P_MAX), phase(P_MAX+1), time(1)] + geometry (22-dim).
+          Pass n_app explicitly for the geometry indicator (K can't be derived from a CTM
+          state that isn't there).
+
+        Inputs (per-intersection, native dims):
+          tsc_state (actor state[1]) = [avg_speed(A), cv_count(A), phase_onehot(P+1), progress(1)]
+              with A = (P-1)*num_segments + 1  (left-turn phase = 1 slot; each through phase = num_segments slots).
+          CTM_state = [approach_density(K*num_segments), phase_onehot(P+1), progress(1)].
+
+        Output (fixed canonical dim, e.g. 46 for P_MAX=K_MAX=4, num_segments=3):
+          concat([ canon_state1, canon_ctm, geometry ]) where
+            canon_state1 = avg(A_MAX) + cv(A_MAX) + phase_onehot(P_MAX+1) + progress(1)
+            canon_ctm    = density(K_MAX*num_segments) + phase_onehot(P_MAX+1) + progress(1)
+            geometry     = [P/P_MAX, K/K_MAX]
+        Real features occupy the LEADING canonical slots (phase ordering puts the
+        left-turn phase first, then through phases in order, so a smaller P simply
+        omits trailing through-phase slots -> contiguous padding). The all-red
+        one-hot bit is re-aligned to the last canonical slot (index P_MAX) so it is
+        consistent across geometries. num_segments (S) is assumed shared across
+        intersections; K (#approaches) is derived from CTM_state length.
+        """
+        S = self.num_segments
+        P = len(self.green_phases)
+        A = (P - 1) * S + 1
+        A_MAX = (P_MAX - 1) * S + 1
+
+        def pad_onehot(oh):
+            c = np.zeros(P_MAX + 1)
+            c[:P] = oh[:P]        # green-phase bits -> leading slots
+            c[P_MAX] = oh[P]      # all-red bit -> last canonical slot
+            return c
+
+        if include_ctm:
+            # cavlight actor state[1] block: [avg_speed(A), cv_count(A), phase(P+1), progress(1)]
+            avg = tsc_state[0:A]
+            cv = tsc_state[A:2 * A]
+            oh = tsc_state[2 * A:2 * A + P + 1]
+            prog = tsc_state[2 * A + P + 1:2 * A + P + 2]
+            c_avg = np.zeros(A_MAX); c_avg[:A] = avg
+            c_cv = np.zeros(A_MAX); c_cv[:A] = cv
+            canon_s1 = np.concatenate([c_avg, c_cv, pad_onehot(oh), prog])
+
+            K = int(round((len(CTM_state) - (P + 1) - 1) / S))  # K*S + (P+1) + 1 = len
+            dens = CTM_state[0:K * S]
+            ctm_oh = CTM_state[K * S:K * S + P + 1]
+            ctm_prog = CTM_state[K * S + P + 1:K * S + P + 2]
+            c_dens = np.zeros(K_MAX * S); c_dens[:K * S] = dens
+            canon_ctm = np.concatenate([c_dens, pad_onehot(ctm_oh), ctm_prog])
+            geom = np.array([P / float(P_MAX), K / float(K_MAX)])
+            return np.concatenate([canon_s1, canon_ctm, geom])
+
+        # presslight phase-based pressure state (no CTM):
+        #   tsc_state = [inc(A), out(P), phase_onehot(P+1), time(1)]
+        #   inc is the per-phase segmented incoming block (A=(P-1)*S+1, attackable);
+        #   out is the per-phase outgoing block (P slots). Pad inc->A_MAX, out->P_MAX.
+        inc = tsc_state[0:A]
+        out = tsc_state[A:A + P]
+        oh = tsc_state[A + P:A + P + (P + 1)]
+        prog = tsc_state[A + P + (P + 1):A + P + (P + 1) + 1]
+        c_inc = np.zeros(A_MAX); c_inc[:A] = inc
+        c_out = np.zeros(P_MAX); c_out[:P] = out
+        canon = np.concatenate([c_inc, c_out, pad_onehot(oh), prog])
+        K = n_app if n_app is not None else K_MAX
+        geom = np.array([P / float(P_MAX), K / float(K_MAX)])
+        return np.concatenate([canon, geom])
+
+    def get_reward(self, attacker_action, total_delay, fake_veh_gen_rate, att_success_idx, s_eff, success_prob=0.0, impact_factor=0.0, marginal=False):
         """
         Impact-Based Reward:
-        Reward = (Total Delay) * (Impact Factor)
+        Reward = (Delay Score) * (Impact Factor)
+
+        marginal=False (default, CAVLight): total_delay is ABSOLUTE system delay; the
+          delay score is non-negative (rewards high absolute delay).
+        marginal=True (PressLight, -marginal_delay): total_delay is the SIGNED delay
+          increase vs a benign baseline (see nextphaserltsc). The delay score is a SIGNED
+          quadratic so an attack that REDUCES delay earns NEGATIVE reward — removing the
+          perverse incentive where a self-correcting victim's attack still scores high on
+          absolute delay.
         """
         if attacker_action is None: return 0, 0
 
         delay_baseline = 0 #1.0
 
         # Base Delay Score
-        positive_delay_score = max(total_delay/ 10.0 - delay_baseline, 0.0) ** 2 / 5
+        if marginal:
+            # total_delay is the SIGNED marginal delay vs the FROZEN baseline (~±1-2, small).
+            # Use a LINEAR signed score, NOT the /10 + quadratic that was calibrated for the
+            # large ABSOLUTE delay (~4.5): squaring a small marginal annihilates it (1.5 ->
+            # (0.15)^2/5 ~ 5e-4), leaving it ~25x below the jsma penalty so the policy learns
+            # only to flip, not to flip HARMFULLY. Linear preserves small signals and the sign
+            # (attack that REDUCES delay -> negative reward). Scale so a typical marginal
+            # dominates the jsma penalty (jsma_lambda=0.1) and drives the delay objective.
+            MARGINAL_SCALE = 2.0   # marginal delay is small (~0.02-0.1); scale so the delay
+                                   # term DOMINATES the jsma penalty (jsma_lambda=0.1) and
+                                   # drives the delay objective, not just flip-to-avoid-penalty.
+            positive_delay_score = total_delay * MARGINAL_SCALE   # signed
+        else:
+            positive_delay_score = max(total_delay/ 10.0 - delay_baseline, 0.0) ** 2 / 5
 
         jsma_penalty = s_eff - 1 
 
@@ -296,7 +391,14 @@ class NextPhaseAttacker(TrafficSignalAttacker):
         
         
         print(f"Delay: {positive_delay_score:.2f} | Avg Impact: {impact_factor:.2f} | Final Reward: {reward_delay:.4f}")
-        
+
+        # LOGGING FIX: record the per-decision attacker reward so simproc's per-episode dump
+        # (reward_store[t].append(attacker.ep_rewards)) is non-empty. The victim does this in its
+        # own get_reward (trafficsignalcontroller.py:1202); the attacker never did, so every
+        # train_rewards_*_att_*.pkl episode was []. ep_rewards is re-init to [] each episode via
+        # sim.close(), so no manual per-episode reset is needed.
+        self.ep_rewards.append(reward_delay)
+
         return reward_delay, jsma_penalty
 
 

@@ -13,7 +13,13 @@ class CTM_model:
         self.OPT_TSC_input = {}
         self.lp_inc_prc = None
 
-        self.stop_cell_est = False # True # 
+        # Free-flow SENDING scale (1.0 = original CTM). Set <1 via the controller (-ctm_vf) to slow
+        # free-flow propagation to the real network speed (v_f=17.88 is ~14% too high) and cut the
+        # systematic under-prediction. Only affects the free-flow regime; congestion is receiving-
+        # limited so it is unchanged. delta_x / cell geometry / detection are untouched.
+        self.v_ff_ratio = 1.0
+
+        self.stop_cell_est = False # True #
 
         self.latest_green_phase = "rrrrrrrrrrrrrGGGGG"
 
@@ -703,10 +709,130 @@ class CTM_model:
                             '0.0.00_0':{"app":"8","cell":[str(i) for i in range(110,122)],"nIntCell":0}
                             }
 
+        elif fp in ["./networks/plymouth_corr_3/CTM_corr3_62532012.csv",
+                   "./networks/plymouth_corr_3/CTM_corr3_62477148.csv",
+                   "./networks/plymouth_corr_3/CTM_corr3_62500824.csv"]:
+            inter_id = fp.split('CTM_corr3_')[-1].replace('.csv','')
+            self.ctm_version = f'corr3_{inter_id}'
+            n_green = 2 if inter_id == '62532012' else 4
+            P = n_green + 1   # +1 for AR/yellow phase slot
+
+            self.sim_len = sim_len
+            self.step_tt    = np.zeros([sim_len])
+            self.step_delay = np.zeros([sim_len])
+            self.state_comparison_CTM = []
+            self.signal = np.zeros([self.sim_len, P])
+
+            network = pd.read_csv(fp, header=0,
+                        names=["cell_idx","type","n_pre_cell","pr1","pr2","pr3",
+                               "n_fol_cell","fo1","fo2","fo3","jam_den","capacity",
+                               "turn_l","turn_th","turn_r","phase","demand","intersection",
+                               "approach","num_lane","seg_idx","ncell2int","detect_cell","cell2lane","direction",
+                               "detect_cell_0","detect_cell_1","detect_cell_2","detect_cell_3","detect_cell_4"])
+            network = network.astype(str)
+            network.type       = network.type.astype(int)
+            network.jam_den    = network.jam_den.astype(float)
+            network.capacity   = network.capacity.astype(float)
+            network.n_pre_cell = network.n_pre_cell.astype(int)
+            network.n_fol_cell = network.n_fol_cell.astype(int)
+            network.phase      = network.phase.astype(int)
+            network.turn_l     = network.turn_l.astype(float)
+            network.turn_th    = network.turn_th.astype(float)
+            network.turn_r     = network.turn_r.astype(float)
+            network.demand     = network.demand.astype(float)
+            network.approach   = network.approach.astype(int)
+            network.num_lane   = network.num_lane.astype(int)
+            network.seg_idx    = network.seg_idx.astype(int)
+            network.ncell2int  = network.ncell2int.astype(int)
+            network.detect_cell   = network.detect_cell.astype(str)
+            network.cell2lane     = network.cell2lane.astype(str)
+            network.direction     = network.direction.astype(str)
+            network.detect_cell_0 = network.detect_cell_0.astype(str)
+            network.detect_cell_1 = network.detect_cell_1.astype(str)
+            network.detect_cell_2 = network.detect_cell_2.astype(str)
+            network.detect_cell_3 = network.detect_cell_3.astype(str)
+            network.detect_cell_4 = network.detect_cell_4.astype(str)
+            self.cell_pd = network
+            self.total_demand = sum(network.demand)
+            self.cell_dict = network.set_index('cell_idx').T.to_dict()
+
+            self.n_cell = len(self.cell_dict)
+            self.n_i_t  = np.zeros([self.sim_len, self.n_cell])
+            self.y_i_t  = np.zeros([self.sim_len, self.n_cell])
+            self.z_i_t  = np.zeros([self.sim_len, self.n_cell])
+            self.avg_diff = []
+            self.turn_ratio_dict  = {}
+            self.diverging_outflow = {}
+            self.v_i_t  = np.zeros([self.sim_len, self.n_cell])
+
+            self.v_f = 17.88
+            self.delta_t = 1
+            self.delta_x = self.v_f * self.delta_t
+
+            for idx in self.cell_dict.keys():
+                n_lane = self.cell_dict[idx]['num_lane']
+                N      = round(n_lane * self.v_f / 7.5)
+                q_max  = 2000 / 3600 * self.delta_t
+                Q      = q_max * n_lane
+                k_jam  = round(1000 / 7.5)
+                k_cri  = (q_max * 3600) / (self.v_f * 3.6)
+                w      = (q_max * 3600) / (k_jam - k_cri) / 3.6
+                alpha  = w / self.v_f
+                self.cell_dict[idx].update({
+                    "N": N, "Q": Q, "q_max": q_max,
+                    "k_jam": k_jam, "k_cri": k_cri, "w": w, "alpha": alpha
+                })
+                if self.cell_dict[idx]['type'] == 1:
+                    self.turn_ratio_dict[idx] = {
+                        self.cell_dict[idx]['fo1']: self.cell_dict[idx]['turn_l'],
+                        self.cell_dict[idx]['fo2']: self.cell_dict[idx]['turn_th'],
+                        self.cell_dict[idx]['fo3']: self.cell_dict[idx]['turn_r']
+                    }
+                    self.diverging_outflow[idx] = {
+                        self.cell_dict[idx]['fo1']: 0,
+                        self.cell_dict[idx]['fo2']: 0,
+                        self.cell_dict[idx]['fo3']: 0
+                    }
+
+            # Build lane2cell from CSV: approach ordinary cells, sorted near→far (ncell2int asc).
+            # Vehicles on any edge in the approach chain all share the same cell_list so that
+            # veh2int // delta_x indexes correctly into the nearest-first ordered list.
+            self.lane2cell = {}
+            for app_id in sorted(network.approach.unique()):
+                if app_id == 0:
+                    continue
+                app_ords = network[
+                    (network.approach == app_id) & (network.type == 0)
+                ].sort_values('ncell2int')   # nci=2 (nearest) first
+                if len(app_ords) > 0:
+                    cell_list = list(app_ords.cell_idx)
+                    all_lanes = set()
+                    for _, row in app_ords.iterrows():
+                        for lane in str(row.cell2lane).split(','):
+                            lane = lane.strip()
+                            if lane and lane not in ('nan', ''):
+                                all_lanes.add(lane)
+                else:
+                    div_row = network[
+                        (network.approach == app_id) & (network.type == 1)
+                    ].iloc[0]
+                    cell_list = [div_row.cell_idx]
+                    all_lanes = set()
+                    for lane in str(div_row.cell2lane).split(','):
+                        lane = lane.strip()
+                        if lane and lane not in ('nan', ''):
+                            all_lanes.add(lane)
+                for lane in all_lanes:
+                    self.lane2cell[lane] = {
+                        "app": str(app_id),
+                        "cell": cell_list,
+                        "nIntCell": 1
+                    }
+
         else:
             raise NotImplementedError
-        
-    
+
+
     def run_CTM(self, curr_phase, curr_t, pred_horizon=10):
         '''
         INPUT:
@@ -753,13 +879,13 @@ class CTM_model:
                         # cal z_i_t: minimum of ni(t),Qi(t),Qi+1(t),a(Ni+1(t)-ni+1(t))
                         # print("cell",i,"time",t,"calculate z_i_t: min",[n_i, Q_i, Q_i_f, alpha*(N_i_f - n_i_f)]) ###
                         if self.cell_dict[str(i+1)]["type"] == 5:
-                            self.z_i_t[t,i] = min([n_i, Q_i, Q_i_f])
+                            self.z_i_t[t,i] = min([self.v_ff_ratio*n_i, Q_i, Q_i_f])
                         else:
                             if alpha*(N_i_f - n_i_f) < 0:
                                 f_cell_f = 0
                             else:
                                 f_cell_f = alpha*(N_i_f - n_i_f)
-                            self.z_i_t[t,i] = min([n_i, Q_i, Q_i_f, f_cell_f]) #should we use z_i_t or directly update the self.z_i_t?
+                            self.z_i_t[t,i] = min([self.v_ff_ratio*n_i, Q_i, Q_i_f, f_cell_f]) #should we use z_i_t or directly update the self.z_i_t?
 #                             if i == 10:
 #                                 print("cell 11: [n_i, Q_i, Q_i_f, f_cell_f] at t",t, [n_i, Q_i, Q_i_f, f_cell_f]) ###
                         if (self.cell_dict[str(i+1)]["type"] == 2) and (self.cell_dict[str(i+1)]["phase"] != 0): # intersection cell
@@ -774,7 +900,7 @@ class CTM_model:
                     alpha = self.cell_dict[str(i+1)]["alpha"]
 #                     print("alpha",alpha,'cell',i+1)
                     n_i = self.n_i_t[t,i]
-                    total_max_outflow = min([n_i,Q_i])
+                    total_max_outflow = min([self.v_ff_ratio*n_i,Q_i])
                     total_outflow = 0
 #                     if i == 11:
 #                             print("cell 12 at time",t,"total_max_out_flow = min[n_i,Q_i]", [n_i,Q_i]) ###
@@ -870,9 +996,11 @@ class CTM_model:
                     # in our case, we use demand. But why original code use 0?
                     # self.y_i_t[t,i] = self.cell_dict[str(i+1)]["demand"]
 
-                    # if lp is activated, use lp info; we can use a self.lp_inc dict to store the info
+                    # if lp is activated, use lp info; we can use a self.lp_inc dict to store the info.
+                    # .get() falls back to the CSV demand for any source cell WITHOUT a detector, so a
+                    # partial detector set never KeyErrors.
                     if (self.lp_inc_prc != None) and (curr_t == t):
-                        self.y_i_t[t,i] = self.lp_inc_prc[str(i+1)]
+                        self.y_i_t[t,i] = self.lp_inc_prc.get(str(i+1), self.cell_dict[str(i+1)]["demand"])
                     else:
                         self.y_i_t[t,i] = self.cell_dict[str(i+1)]["demand"]
                 else:
@@ -954,13 +1082,13 @@ class CTM_model:
                         # cal z_i_t: minimum of ni(t),Qi(t),Qi+1(t),a(Ni+1(t)-ni+1(t))
                         # print("cell",i,"time",t,"calculate z_i_t: min",[n_i, Q_i, Q_i_f, alpha*(N_i_f - n_i_f)]) ###
                         if self.cell_dict[str(i+1)]["type"] == 5:
-                            z_i_t[t,i] = min([n_i, Q_i, Q_i_f])
+                            z_i_t[t,i] = min([self.v_ff_ratio*n_i, Q_i, Q_i_f])
                         else:
                             if alpha*(N_i_f - n_i_f) < 0:
                                 f_cell_f = 0
                             else:
                                 f_cell_f = alpha*(N_i_f - n_i_f)
-                            z_i_t[t,i] = min([n_i, Q_i, Q_i_f, f_cell_f]) #should we use z_i_t or directly update the self.z_i_t?
+                            z_i_t[t,i] = min([self.v_ff_ratio*n_i, Q_i, Q_i_f, f_cell_f]) #should we use z_i_t or directly update the self.z_i_t?
 #                             if i == 10:
 #                                 print("cell 11: [n_i, Q_i, Q_i_f, f_cell_f] at t",t, [n_i, Q_i, Q_i_f, f_cell_f]) ###
                         if (self.cell_dict[str(i+1)]["type"] == 2) and (self.cell_dict[str(i+1)]["phase"] != 0): # intersection cell
@@ -975,7 +1103,7 @@ class CTM_model:
                     alpha = self.cell_dict[str(i+1)]["alpha"]
 #                     print("alpha",alpha,'cell',i+1)
                     n_i = n_i_t[t,i]
-                    total_max_outflow = min([n_i,Q_i])
+                    total_max_outflow = min([self.v_ff_ratio*n_i,Q_i])
                     total_outflow = 0
 #                     if i == 11:
 #                             print("cell 12 at time",t,"total_max_out_flow = min[n_i,Q_i]", [n_i,Q_i]) ###
@@ -1130,6 +1258,22 @@ class CTM_model:
                             "yyyrrrrryyyyrrrrrr":4,
                             "rrrryyyyrrrrrrrrrr":4,
                             "rrrrrrrrrrrrryyyyy":4}
+            curr_phase_idx = phase_idx_dict[curr_phase]
+        elif self.ctm_version.startswith('corr3_'):
+            # Green phase lists (index = CTM signal index 0-based)
+            _green_phases = {
+                'corr3_62532012': ['GGGGGgrrrr', 'GrrrrrGGGG'],
+                'corr3_62477148': ['rrrrGGGrrrrrrGGGrr', 'rrrrrrrGGrrrrrrrGG',
+                                   'GGGGrrrrrrrrrrrrrr', 'rrrrrrrrrGGGGrrrrr'],
+                'corr3_62500824': ['GGGrrrrrrGGGrrrrr',  'rrrGrrrrrrrrGrrrr',
+                                   'rrrrGGGGGrrrrrrrr',  'rrrrrrrrrrrrrGGGG'],
+            }
+            gp = _green_phases[self.ctm_version]
+            n_green = len(gp)
+            if curr_phase in gp:
+                curr_phase_idx = gp.index(curr_phase)
+            else:
+                curr_phase_idx = n_green   # yellow / all-red -> AR slot
         else:
             # tsc program 0
             phase_idx_dict = {"GGGrrrrrGGGGrrrrrr":0,
@@ -1141,10 +1285,32 @@ class CTM_model:
                             "rrrryyyyrrrrrrrrrr":4,
                             "rrrrrrrrrrrrryyyyy":4,
                             "rrryrrrrrrrryrrrrr":4}
-                                
-        curr_phase_idx = phase_idx_dict[curr_phase]
+            curr_phase_idx = phase_idx_dict[curr_phase]
 
-        if curr_phase_idx != 4:
+        if self.ctm_version.startswith('corr3_'):
+            AR_idx = n_green
+            if curr_phase_idx != AR_idx:
+                self.latest_green_phase = curr_phase
+                next_phase_idx = (curr_phase_idx + 1) % n_green
+                next_phase_minG = 10
+                phase_idx_group = [curr_phase_idx, AR_idx, AR_idx, next_phase_idx]
+                phase_duration_group = [pred_horizon, 4, 1, next_phase_minG]
+                start_t_group = [obs_t, obs_t+pred_horizon,
+                                 obs_t+pred_horizon+4, obs_t+pred_horizon+5]
+            else:
+                latest_idx = gp.index(self.latest_green_phase) if self.latest_green_phase in gp else 0
+                next_phase_idx = (latest_idx + 1) % n_green
+                next_phase_minG = 10
+                if 'y' in curr_phase:
+                    phase_idx_group = [AR_idx, AR_idx, next_phase_idx]
+                    phase_duration_group = [pred_horizon, 1, next_phase_minG]
+                    start_t_group = [obs_t, obs_t+pred_horizon, obs_t+pred_horizon+1]
+                else:
+                    phase_idx_group = [AR_idx, next_phase_idx]
+                    phase_duration_group = [pred_horizon, next_phase_minG]
+                    start_t_group = [obs_t, obs_t+pred_horizon]
+
+        elif curr_phase_idx != 4:
             self.latest_green_phase = curr_phase
             # if the current phase is green phase, we will use the CTM to predict traffic status till the end of MinG of next phase
             next_phase_idx = curr_phase_idx - 1
@@ -1158,7 +1324,7 @@ class CTM_model:
             phase_idx_group = [curr_phase_idx, 4, 4, next_phase_idx]
             phase_duration_group = [pred_horizon, 4, 1, next_phase_minG]
             start_t_group = [obs_t, obs_t+pred_horizon, obs_t+pred_horizon+4, obs_t+pred_horizon+5]
-        
+
         else:
             # if the current phase is AR or Y
             next_phase_idx = phase_idx_dict[self.latest_green_phase] - 1
@@ -1242,7 +1408,8 @@ class CTM_model:
                         # set its detected cells as 0 if no veh detected yet
                         # get detected cell id
                         detect_cell_ls = self.cell_dict[veh_cell_id]["detect_cell"] # a string of cell ids, "id1,id2,..."
-                        detect_cell_ls = detect_cell_ls.split(",") # a list of cell idx
+                        detect_cell_ls = [str(int(float(x.strip()))) for x in detect_cell_ls.split(",")
+                                          if x.strip() not in ('', 'nan')]  # normalize '13.0' → '13'
                         for i in detect_cell_ls:
                             # calculate dist_det_cell for each detected cell, based on which we can calculate conf_i_t
                             if (self.ctm_version == "1788") and real_detect_acc:
@@ -1722,7 +1889,59 @@ class CTM_model:
         # print("ACTOR num_veh_inc", num_veh_inc) ###
         
         return np.concatenate([avg_speed_inc_final, num_veh_inc_final])
-    
+
+    def get_approach_seg_counts(self, t):
+        """Raw per-approach × segment vehicle counts at CTM time index t, WITHOUT side effects.
+        Same layout as get_state_CTM_corr3's state_comparison_CTM. Used for CTM prediction-accuracy
+        logging (compare a forward prediction at t_pred vs the realized value once t_pred arrives).
+        Returns a zero vector if t is out of the solved horizon.
+        """
+        app_ids = sorted(set(
+            int(self.cell_dict[k]['approach'])
+            for k in self.cell_dict
+            if int(self.cell_dict[k]['approach']) > 0
+        ))
+        num_veh = np.zeros((len(app_ids), 3))
+        try:
+            if not (0 <= int(t) < self.n_i_t.shape[0]):
+                return num_veh.flatten()
+        except Exception:
+            return num_veh.flatten()
+        for i in range(self.n_cell):
+            app_i = int(self.cell_dict[str(i+1)]['approach'])
+            if app_i == 0:
+                continue
+            seg_i = self.cell_dict[str(i+1)]['seg_idx']
+            if seg_i in (1, 2, 3):
+                num_veh[app_ids.index(app_i), seg_i - 1] += self.n_i_t[int(t), i]
+        return num_veh.flatten()
+
+    def get_state_CTM_corr3(self, t):
+        """Vehicle counts per approach × segment for corr3 intersections.
+        Returns L2-normalized flat array; sets state_comparison_CTM (raw counts) for accuracy tracking.
+        """
+        app_ids = sorted(set(
+            int(self.cell_dict[k]['approach'])
+            for k in self.cell_dict
+            if int(self.cell_dict[k]['approach']) > 0
+        ))
+        n_app = len(app_ids)
+        num_veh = np.zeros((n_app, 3))
+        for i in range(self.n_cell):
+            app_i = int(self.cell_dict[str(i+1)]['approach'])
+            if app_i == 0:
+                continue
+            seg_i = self.cell_dict[str(i+1)]['seg_idx']
+            if seg_i in (1, 2, 3):
+                row = app_ids.index(app_i)
+                num_veh[row, seg_i - 1] += self.n_i_t[t, i]
+        flat = num_veh.flatten()
+        self.state_comparison_CTM = [flat.copy()]
+        norm = np.linalg.norm(flat)
+        if norm == 0:
+            norm = 1.0
+        return flat / norm
+
     def get_state_CTM_MP(self,t,phase):
         # based on n_i_t, generate the traffic state information MP would need 
         # need to provide number of vehicle for each lane: 
@@ -1911,6 +2130,10 @@ class CTM_model:
             signal_time_plan = [(21,0),(5,3),(12,1),(5,3),(7,2),(5,3)] # (duration, phase idx)
         elif  self.ctm_version == "122_4ph":
             signal_time_plan = [(12,0),(5,4),(21,1),(5,4),(12,2),(5,4),(21,3),(5,4)]
+        elif self.ctm_version == 'corr3_62532012':
+            signal_time_plan = [(38,0),(5,2),(37,1),(5,2)]  # 2 green phases
+        elif self.ctm_version in ('corr3_62477148', 'corr3_62500824'):
+            signal_time_plan = [(20,0),(5,4),(6,1),(5,4),(10,2),(5,4),(10,3),(5,4)]  # 4 green phases
         cycle_length = sum(i[0] for i in signal_time_plan)
         total_sim_len = sim_len #2100
         number_cycle = total_sim_len//cycle_length
@@ -1967,7 +2190,10 @@ class CTM_model:
             approach = {i:[] for i in range(1,9)}
             for i in range(self.n_cell):
                 app = self.cell_dict[str(i+1)]["approach"]
-                approach[app].append(i)
+                # corr3 CTMs have intersection cells with approach=0 (and only 3-4
+                # real approaches); only bin cells that map to a plotted approach 1-8.
+                if app in approach:
+                    approach[app].append(i)
 
             plt.ion()
             
@@ -1983,6 +2209,8 @@ class CTM_model:
                 
     #             r_idx = (int(app_idx)-1)//4
     #             c_idx = (int(app_idx)-1)%4
+                if len(cell_ls) == 0:
+                    continue  # skip approaches with no cells (corr3: approaches 5-8)
                 idx = [[0,0],[1,0],
                     [0,1],[1,1],
                     [0,2],[1,2],
@@ -2009,7 +2237,10 @@ class CTM_model:
             approach = {i:[] for i in range(1,9)}
             for i in range(self.n_cell):
                 app = self.cell_dict[str(i+1)]["approach"]
-                approach[app].append(i)
+                # corr3 CTMs have intersection cells with approach=0 (and only 3-4
+                # real approaches); only bin cells that map to a plotted approach 1-8.
+                if app in approach:
+                    approach[app].append(i)
             
             fig, axs = plt.subplots(2, 4, sharex= True, figsize=(16,8))
             
@@ -2023,6 +2254,8 @@ class CTM_model:
                 
     #             r_idx = (int(app_idx)-1)//4
     #             c_idx = (int(app_idx)-1)%4
+                if len(cell_ls) == 0:
+                    continue  # skip approaches with no cells (corr3: approaches 5-8)
                 idx = [[0,0],[1,0],
                     [0,1],[1,1],
                     [0,2],[1,2],
@@ -2043,6 +2276,7 @@ class CTM_model:
             #plt.colorbar(fraction=0.05)
             plt.tight_layout()
             plt.savefig("./exp_log/CTM/"+tlid+"CTM.png")
+            plt.close(fig)
      
     def save_nvlist(self,time,tlid):
         fp = "./exp_log/FD_validation/"+tlid+"_"

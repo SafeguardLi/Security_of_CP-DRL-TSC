@@ -34,6 +34,9 @@ class TrafficMetrics:
         if 'intersec' in metric_args:
             self.metrics['intersec'] = IntersecMetric(_id, incoming_lanes, mode)
 
+        if 'throughput' in metric_args:
+            self.metrics['throughput'] = ThroughputMetric(_id, incoming_lanes, mode)
+
 
     def update(self, v_data, cv_data=None):
         for m in self.metrics:
@@ -168,6 +171,37 @@ class DelayMetric(TrafficMetric):
         self.avg_delay_lane = {lane: (((self.delay_lane[lane]/self.lane_veh_count[lane])//self.lane_travel_times[lane]) if self.lane_veh_count[lane] else 0 ) for lane in self.incoming_lanes }
 
         # print(self.t, self.delay, self.delay_cv)
+
+
+class ThroughputMetric(TrafficMetric):
+    """Per-intersection throughput: cumulative count of vehicles DISCHARGED from
+    this intersection's incoming lanes (i.e. vehicles that were queued/travelling on
+    an approach and then crossed the stop bar). Unlike DelayMetric (an instantaneous
+    local queue-delay), this is a straightforward, monotonically-increasing 'vehicles
+    served' count — an effective attack lowers it. Recorded per step in test mode; the
+    final value is the total served over the run.
+
+    Caveat: a vehicle also leaves an incoming lane if SUMO teleports it out of a
+    gridlock, so severe attack-induced gridlock can slightly inflate this count. For a
+    clean serve count exclude teleports if that becomes material.
+    """
+    def __init__(self, _id, incoming_lanes, mode):
+        super().__init__(_id, incoming_lanes, mode)
+        self.old_v = set()
+        self.throughput = 0
+
+    def get_metric(self):
+        return self.throughput
+
+    def update(self, v_data, cv_data=None):
+        new_v = set()
+        for lane in self.incoming_lanes:
+            new_v.update(set(v_data[lane].keys()))
+        # vehicles that were on an approach last step and are now gone -> discharged
+        self.throughput += len(self.old_v - new_v)
+        self.old_v = new_v
+        if self.mode == 'test':
+            self.history.append(self.get_metric())
 
 
 class MainDelayMetric(DelayMetric):

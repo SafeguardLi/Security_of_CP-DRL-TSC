@@ -1,0 +1,6 @@
+<additional>
+    <!-- Sinks: vehicles are removed upon reaching these edges.
+         Green Rd (62606176) removed vs corr_4; eastern boundary is now 441190750.
+    -->
+    <sink edges="E3 E4 441190750 1162299121 441190764#1 -1162299113 441190726"/>
+</additional>

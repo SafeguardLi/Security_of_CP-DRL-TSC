@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<routes>
+    <!-- Train volumes = 75% of real-world demand. -->
+    <!-- WB entry = 815 veh/hr (75% of 1087). -->
+    <flow id="Flow_East_WB"    from="-441190750" to="E4"        number="815" begin="0" end="3600" departLane="best" departSpeed="max"/>
+    <flow id="Flow_West_NW_EB" from="-E4"        to="441190750" number="135" begin="0" end="3600" departLane="best" departSpeed="max"/>
+    <flow id="Flow_West_SW_EB" from="-E3"        to="441190750" number="713" begin="0" end="3600" departLane="best" departSpeed="max"/>
+
+    <flow id="Flow_Nixon_NB" from="-441190764#1" to="1162299121"  number="131" begin="0" end="3600" departLane="best"/>
+    <flow id="Flow_Nixon_SB" from="-1162299121"  to="441190764#1" number="293" begin="0" end="3600" departLane="best"/>
+
+    <flow id="Flow_Huron_NB" from="1463257289" to="-1162299113" number="324" begin="0" end="3600" departLane="best"/>
+    <flow id="Flow_Huron_SB" from="1162299113"  to="441190726"  number="673" begin="0" end="3600" departLane="best"/>
+</routes>

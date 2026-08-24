@@ -4,6 +4,8 @@ from src.trafficsignalcontrollers.maxpressuretsc import MaxPressureTSC
 from src.trafficsignalcontrollers.optimizationtsc import OptimizationTSC
 from src.trafficsignalcontrollers.sotltsc import SOTLTSC
 from src.trafficsignalcontrollers.nextphaserltsc import NextPhaseRLTSC
+from src.trafficsignalcontrollers.nextphasepresslighttsc import NextPhasePressLightTSC
+from src.trafficsignalcontrollers.nextphasepresslightattacktsc import NextPhasePressLightAttackTSC
 from src.trafficsignalcontrollers.actuatedtsc import ActuatedTSC
 from src.trafficsignalcontrollers.MMITISStsc import mmitissTSC
 from src.rl_factory import rl_factory
@@ -31,6 +33,18 @@ def tsc_factory(tsc_type, tl, args, netdata, neural_network, eps, conn):
                               neural_network, 2, eps, tl) #n_action is 2 for RL-TSC, switch or stay
         return NextPhaseRLTSC(conn, tl, args.mode, netdata, args.r, args.y,
                               args.g_min, args.g_max, tsc_agent, tsc_type, eps, args.eps_min, args.eps_factor, args.estimate_queue, args.num_segments, args.cong_thresh, args.detect_r,args.sync, args.all_veh_r,args.act_ctm, args)
+    elif tsc_type in ['presslight']:
+        tsc_agent = rl_factory(tsc_type, args, neural_network, 2, eps, tl)
+        if getattr(args, 'att_model', None):
+            # attack run: DQN-victim attack controller (subclass of NextPhaseRLTSC).
+            # Uses the same __init__ signature as the CAVLight attack TSC.
+            return NextPhasePressLightAttackTSC(conn, tl, args.mode, netdata, args.r, args.y,
+                                  args.g_min, args.g_max, tsc_agent, tsc_type, eps, args.eps_min, args.eps_factor, args.estimate_queue, args.num_segments, args.cong_thresh, args.detect_r, args.sync, args.all_veh_r, args.act_ctm, args)
+        # benign run: original PressLight controller
+        return NextPhasePressLightTSC(conn, tl, args.mode, netdata, args.r, args.y,
+                                      args.g_min, args.g_max, tsc_agent, tsc_type, eps,
+                                      args.eps_min, args.eps_factor,
+                                      args.num_segments, args.detect_r, args)
     elif tsc_type == 'opt':
         return OptimizationTSC(conn, tl, args.mode, netdata, args.r, args.y,
                               args.g_min, args.detect_r, args.g_max, args.act_ctm)

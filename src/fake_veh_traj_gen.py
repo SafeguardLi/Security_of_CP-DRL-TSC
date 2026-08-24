@@ -96,6 +96,7 @@ def optimization_process(dict_test,
 
         # timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
 
+        # save_dir = "/home/wangzhi/Documents/DRL-attacker/exp_log/fake_traj"        
         # if not os.path.exists(save_dir):
         #     os.makedirs(save_dir)
         
@@ -321,7 +322,7 @@ def optimization_process(dict_test,
     
     # Solve the model
     solver = SolverFactory("gurobi_direct")
-    
+
     start_time = time.time()
     results = solver.solve(model)
     end_time = time.time()

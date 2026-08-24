@@ -139,23 +139,26 @@ class NetworkData:
             node_data[node_id]['viaLaneID'] = { conn.getViaLaneID():str(conn.getToLane().getID()) for conn in node.getConnections()}
             node_data[node_id]['viaLaneID_out'] = { conn.getViaLaneID():str(conn.getFromLane().getID()) for conn in node.getConnections()}
 
-            if node_id == '-13968': # wz: why is -13968 so special? Genders encountered some issue in this intersection.
-                missing = []
-                negative = []
-                for i in range(len(node_data[node_id]['tlsindex'])):
-                    if i not in node_data[node_id]['tlsindex']:
-                        missing.append(i)
+            # Remap negative TLS indices (uncontrolled movements) to fill any gaps
+            # in the positive index sequence. Some SUMO connections return
+            # getTLLinkIndex() == -1 which creates gaps; phase_lanes() requires
+            # contiguous indices. Originally only applied to '-13968'; generalized
+            # to all nodes since corr3 intersections have the same issue.
+            missing = []
+            negative = []
+            for i in range(len(node_data[node_id]['tlsindex'])):
+                if i not in node_data[node_id]['tlsindex']:
+                    missing.append(i)
 
-                for k in node_data[node_id]['tlsindex']:
-                    if k < 0  :
-                        negative.append(k)
-              
-                for m,n in zip(missing, negative):
-                    node_data[node_id]['tlsindex'][m] = node_data[node_id]['tlsindex'][n]
-                    del node_data[node_id]['tlsindex'][n]
-                    #for index dir
-                    node_data[node_id]['tlsindexdir'][m] = node_data[node_id]['tlsindexdir'][n]
-                    del node_data[node_id]['tlsindexdir'][n]
+            for k in node_data[node_id]['tlsindex']:
+                if k < 0:
+                    negative.append(k)
+
+            for m, n in zip(missing, negative):
+                node_data[node_id]['tlsindex'][m] = node_data[node_id]['tlsindex'][n]
+                del node_data[node_id]['tlsindex'][n]
+                node_data[node_id]['tlsindexdir'][m] = node_data[node_id]['tlsindexdir'][n]
+                del node_data[node_id]['tlsindexdir'][n]
             
             #get XY coords
             pos = node.getCoord()

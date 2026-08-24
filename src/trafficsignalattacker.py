@@ -73,7 +73,7 @@ class TrafficSignalAttacker:
 
 
         ## 02132023 connected lane section
-        # 10232022: modify the incoming lane and outgoing lane data structure
+        # WZ 10232022: modify the incoming lane and outgoing lane data structure
         self.get_SR_lanes(self.id) #,map_name) # WZ 0215 mainly for Plymouth for now.
         self.conn_incoming_lane = {inc_lane: [inc_lane] for inc_lane in self.incoming_lanes}
         self.conn_outgoing_lane = {out_lane: [out_lane] for out_lane in self.outgoing_lanes}
@@ -289,6 +289,7 @@ class TrafficSignalAttacker:
 
     def get_SR_lanes(self,tlid, map_name="plymouth"):
         # WZ: we can also directly get the right-turning lane by reading each incoming lane with index 0.
+        self.SR_lanes = []  # default: no shared right-turn lanes for unrecognized junctions
         if map_name in ["plymoth",'plymouth']:
             if tlid == "79":
                 # first version: with all SR lanes
@@ -302,8 +303,6 @@ class TrafficSignalAttacker:
         elif map_name == "simp_plymouth":
             if tlid == "J1":
                 self.SR_lanes = ['-E6_1','-E4_1','E5_1','E3_1']
-        else:
-            print("ERROR please provide a map with pre-define SR lanes")
 
     def update_historic_data(self, data, time): # Maintain historic CV data for Queue Estimation
         
@@ -341,7 +340,7 @@ class TrafficSignalAttacker:
     #     self.t = time
 
 
-    #     self.trafficmetrics.update(data, cv_data) #  : see if this needs to accomodate UV data
+    #     self.trafficmetrics.update(data, cv_data) # Ujwal: see if this needs to accomodate UV data
 
     #     if act_lp:
     #         self.update_loop_info()
@@ -409,7 +408,7 @@ class TrafficSignalAttacker:
     def next_phase_duration(self,current_phase):
         raise NotImplementedError("Subclasses should implement this!")
 
-    def update(self, data, cv_data, uv_data, mask): #  added cv_data, uv_data for global critic; wz add mask
+    def update(self, data, cv_data, uv_data, mask): #Ujwal added cv_data, uv_data for global critic; wz add mask
         """
             Implement this function to perform any
            traffic signal class specific control/updates 
@@ -423,7 +422,7 @@ class TrafficSignalAttacker:
         #create empty incoming lanes for use else where
         lane_vehicles = {l:{} for l in self.incoming_lanes}
         lane_vehicles_cv = {l: {} for l in self.incoming_lanes} # wz: cv
-        lane_vehicles_uv = {l: {} for l in self.incoming_lanes} #  : uv
+        lane_vehicles_uv = {l: {} for l in self.incoming_lanes} # Ujwal: uv
         # out_lane_vehicles = {l:{} for l in self.outgoing_lanes} # wz: presslight
 
         if tl_data is not None:
@@ -465,14 +464,18 @@ class TrafficSignalAttacker:
     
     def phase_lanes(self, actions):
         phase_lanes = {a:[] for a in actions}
+        tlsindex = self.netdata['inter'][self.id]['tlsindex']
         for a in actions:
             green_lanes = set()
             red_lanes = set()
             for s in range(len(a)):
+                lane = tlsindex.get(s)
+                if lane is None:
+                    continue
                 if a[s] == 'g' or a[s] == 'G':
-                    green_lanes.add(self.netdata['inter'][self.id]['tlsindex'][s])
+                    green_lanes.add(lane)
                 elif a[s] == 'r':
-                    red_lanes.add(self.netdata['inter'][self.id]['tlsindex'][s])
+                    red_lanes.add(lane)
 
             ###some movements are on the same lane, removes duplicate lanes
             pure_green = [l for l in green_lanes if l not in red_lanes]
@@ -989,7 +992,7 @@ class TrafficSignalAttacker:
     
     def get_num_vehicle(self, global_critic='none', num_segments=1):
         #number of vehicles in each incoming lane divided by the lane's capacity
-        if num_segments==1: #  : Bypass unnecessary computation if no segmentation
+        if num_segments==1: #Ujwal : Bypass unnecessary computation if no segmentation
 
             if global_critic == 'total':
                 return np.array([len(self.data[lane]) for lane in self.incoming_lanes])
@@ -1074,7 +1077,7 @@ class TrafficSignalAttacker:
 
     def empty_intersection(self):
         # for lane in self.incoming_lanes:
-        #     # wz: here   change it from self.data to self.cv_data makes sense since intersection can only observe CVs.
+        #     # wz: here ujwal change it from self.data to self.cv_data makes sense since intersection can only observe CVs.
         #     if len(self.cv_data[lane]) > 0:
         #         return False
         # return True

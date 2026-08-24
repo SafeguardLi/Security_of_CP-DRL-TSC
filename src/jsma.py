@@ -2,6 +2,7 @@
 from src.saliency_map import SaliencyMapMethod
 from art.estimators.classification import KerasClassifier, PyTorchClassifier
 
+import os
 import tensorflow as tf
 import torch
 import torch.nn as nn
@@ -61,9 +62,9 @@ import torch.nn.functional as F
 #     return output
 
 class BinaryClassifier(nn.Module):
-    def __init__(self):
+    def __init__(self, input_dim=26):
         super(BinaryClassifier, self).__init__()
-        self.fc1 = nn.Linear(26, 64)
+        self.fc1 = nn.Linear(input_dim, 64)
         self.fc2 = nn.Linear(64, 32)
         self.fc3 = nn.Linear(32, 2)
 
@@ -74,34 +75,55 @@ class BinaryClassifier(nn.Module):
         x = F.softmax(x, dim=1)
         return x
 
-def init_attack(load_model, jsma_params):
-    # weights = load_model.get_weights('online')
-    # classifier = BuildModel(weights)
+def init_attack(load_model, jsma_params, input_dim=26, classifier_path=None, white_box=False,
+                feature_range=(10, 21), recompile_loss=None):
+    if white_box and load_model is not None:
+        # White-box: JSMA attacks the real TSC victim directly.
+        # load_model is the victim network; its 'online' model is a clean Keras
+        # Model(state_in -> output), so ART can read its Jacobian via class_gradient.
+        keras_model = load_model.models['online']
+        if recompile_loss is not None:
+            # DQN victim (PressLight): 'online' outputs LINEAR Q-values. Two problems for JSMA:
+            #   (1) it was compiled with loss='mse', which ART's KerasClassifier can't resolve;
+            #   (2) the raw-Q gradient is a POOR saliency signal. Restricted to the spoofable
+            #       inc+out features (the real feature_range), raw-Q JSMA flips the argmax only
+            #       ~13% of the time and needs a large (~6x) perturbation the discrete fake-
+            #       vehicle injection can't realize -> attack lands ~0% in the corridor.
+            # FIX: attack a SOFTMAX head on top of Q. softmax gives a boundary-aligned gradient,
+            # so JSMA flips the argmax ~100% with a SMALL, injection-realizable perturbation.
+            # softmax is MONOTONIC: argmax(softmax(Q)) == argmax(Q), so the victim's actual
+            # decision is UNCHANGED. This builds a SEPARATE surrogate Model sharing the frozen
+            # weights; load_model ('online') is never modified. cavlight is unaffected — its
+            # actor already outputs softmax and passes recompile_loss=None, so it skips this.
+            # (Verified offline on 62500824 deploy states: raw-Q flip 13% -> softmax flip 100%,
+            #  mean|dx| 21 -> 3.75.)
+            jsma_model = tf.keras.models.Model(
+                keras_model.input,
+                tf.keras.layers.Activation('softmax')(keras_model.output))
+            jsma_model.compile(optimizer='adam', loss=recompile_loss)
+            keras_model = jsma_model
+        classifier = KerasClassifier(model=keras_model, clip_values=(0, 2), use_logits=False)
+        jsma = SaliencyMapMethod(classifier=classifier, feature_range=feature_range)
+        return jsma, classifier
 
-    # set classifier as torch one rather than keras
-
+    # Surrogate (BLACKBOX) path: JSMA analyzes a trained BinaryClassifier surrogate standing in for
+    # the victim actor. The victim's real model is never touched here — features are chosen purely
+    # from the surrogate's gradient, then injected and fed to the real TSC by the caller.
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = BinaryClassifier().to(device)
+    model = BinaryClassifier(input_dim=input_dim).to(device)
 
-    # Load the saved weights
-    model.load_state_dict(torch.load("/home/Documents/DRL-attacker/experiments/cavlight/CAV_pen_rate_5.0/plymouth_bin_real_real/saved_models/binary_classifier.pth", map_location=torch.device('cpu')))
-    # Set to evaluation mode
+    if classifier_path is not None and os.path.exists(classifier_path):
+        model.load_state_dict(torch.load(classifier_path, map_location=torch.device('cpu')))
+        print(f"[blackbox JSMA] loaded surrogate weights from {classifier_path}")
+    else:
+        print(f"[blackbox JSMA] WARNING: surrogate weights not found at {classifier_path} — using "
+              f"RANDOM init (JSMA direction still defined but NOT the victim's).")
+
     model.eval()
 
-    # Trigger White-box attack, we change the classifier here.
+    classifier = PyTorchClassifier(model=model, clip_values=(0, 2), loss=nn.BCELoss(), input_shape=(input_dim,), nb_classes=2)
 
-    classifier = PyTorchClassifier(model=model, clip_values=(0, 2),loss=nn.BCELoss(), input_shape = (26,), nb_classes = 2)
-
-    # classifier = KerasClassifier(model= load_model.models['online'], clip_values=(0, 2), use_logits=False) #-> ART repo speicifies loss and our customized loss model cant be used
-    
-    jsma = SaliencyMapMethod(classifier=classifier) # we can pass JSMA parameters here
-    # theta: float = 0.1, gamma: float = 1.0, batch_size: int = 1, verbose: bool = True
-
-    # grads = self.estimator.class_gradient(x, label=target)
-    # https://github.com/Trusted-AI/adversarial-robustness-toolbox/blob/9ed6105b0152bc9b0c902ab3734c1d8acf476315/art/attacks/evasion/saliency_map.py#L205C9-L205C63
-    # TODO: use the jsma.estimator.class_gradient to generate saliency map and save it for later viz
-    # targets = np.argmax(y, axis=1)
-    # x: a batch of input
-    # will give back the saliency map for all features towards the target action
+    # Restrict JSMA to the spoofable CV block (same as white-box) so only injectable features move.
+    jsma = SaliencyMapMethod(classifier=classifier, feature_range=feature_range)
 
     return jsma, classifier

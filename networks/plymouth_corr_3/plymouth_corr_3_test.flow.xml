@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<routes>
+    <!-- Test volumes = real-world demand. Green Rd removed; eastern boundary is now Huron's east side (x=1140). -->
+    <!-- WB entry = 1087 (Huron Plymouth_West approach count, which is now the network's eastern entry). -->
+    <flow id="Flow_East_WB"    from="-441190750" to="E4"        number="1087" begin="0" end="3600" departLane="best" departSpeed="max"/>
+    <flow id="Flow_West_NW_EB" from="-E4"        to="441190750" number="180"  begin="0" end="3600" departLane="best" departSpeed="max"/>
+    <flow id="Flow_West_SW_EB" from="-E3"        to="441190750" number="950"  begin="0" end="3600" departLane="best" departSpeed="max"/>
+
+    <flow id="Flow_Nixon_NB" from="-441190764#1" to="1162299121"  number="174" begin="0" end="3600" departLane="best"/>
+    <flow id="Flow_Nixon_SB" from="-1162299121"  to="441190764#1" number="390" begin="0" end="3600" departLane="best"/>
+
+    <flow id="Flow_Huron_NB" from="1463257289" to="-1162299113" number="432" begin="0" end="3600" departLane="best"/>
+    <flow id="Flow_Huron_SB" from="1162299113"  to="441190726"  number="897" begin="0" end="3600" departLane="best"/>
+</routes>

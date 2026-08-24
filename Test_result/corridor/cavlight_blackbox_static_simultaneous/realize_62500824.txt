@@ -1,0 +1,6 @@
+id=62500824 pid=2768584 updated=2026-08-21 01:42:33 t_sim=17951
+num_JSMA=55 failed_JSMA=20 fail_rate=0.364
+total_flip(clean!=realized)=33 flip_rate=0.600
+REQ(target!=clean)=40 REQ_realized(action==target)=27 realized_rate=0.675
+Qmargin_to_target clean=-0.9985 attacked=0.3501 (need >0 to flip; n=40)
+INCOMING optimizer(gurobi): total=0 failed=0 fail_rate=0.000 (out-density model has no optimizer)

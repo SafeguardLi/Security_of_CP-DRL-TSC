@@ -1,0 +1,22 @@
+<additional>
+  <inductionLoop id="lp_62500824_-441190750_0" lane="-441190750_0" pos="1.0" period="1" file="NUL"/>
+  <inductionLoop id="lp_62500824_-441190750_1" lane="-441190750_1" pos="1.0" period="1" file="NUL"/>
+  <inductionLoop id="lp_62500824_-441190750_2" lane="-441190750_2" pos="1.0" period="1" file="NUL"/>
+  <inductionLoop id="lp_62500824_897491918_0" lane="897491918_0" pos="1.0" period="1" file="NUL"/>
+  <inductionLoop id="lp_62500824_897491918_1" lane="897491918_1" pos="1.0" period="1" file="NUL"/>
+  <inductionLoop id="lp_62500824_1463257289_0" lane="1463257289_0" pos="1.0" period="1" file="NUL"/>
+  <inductionLoop id="lp_62500824_1463257289_1" lane="1463257289_1" pos="1.0" period="1" file="NUL"/>
+  <inductionLoop id="lp_62500824_441190721_0" lane="441190721_0" pos="1.0" period="1" file="NUL"/>
+  <inductionLoop id="lp_62477148_-412646493_0" lane="-412646493_0" pos="1.0" period="1" file="NUL"/>
+  <inductionLoop id="lp_62477148_-412646493_1" lane="-412646493_1" pos="1.0" period="1" file="NUL"/>
+  <inductionLoop id="lp_62477148_441190747_0" lane="441190747_0" pos="1.0" period="1" file="NUL"/>
+  <inductionLoop id="lp_62477148_441190747_1" lane="441190747_1" pos="1.0" period="1" file="NUL"/>
+  <inductionLoop id="lp_62477148_-441190744_0" lane="-441190744_0" pos="1.0" period="1" file="NUL"/>
+  <inductionLoop id="lp_62477148_-441190764#1_0" lane="-441190764#1_0" pos="1.0" period="1" file="NUL"/>
+  <inductionLoop id="lp_62532012_-441190747_0" lane="-441190747_0" pos="1.0" period="1" file="NUL"/>
+  <inductionLoop id="lp_62532012_-441190747_1" lane="-441190747_1" pos="1.0" period="1" file="NUL"/>
+  <inductionLoop id="lp_62532012_-441190747_2" lane="-441190747_2" pos="1.0" period="1" file="NUL"/>
+  <inductionLoop id="lp_62532012_-E4_0" lane="-E4_0" pos="1.0" period="1" file="NUL"/>
+  <inductionLoop id="lp_62532012_-E3_0" lane="-E3_0" pos="1.0" period="1" file="NUL"/>
+  <inductionLoop id="lp_62532012_-E3_1" lane="-E3_1" pos="1.0" period="1" file="NUL"/>
+</additional>

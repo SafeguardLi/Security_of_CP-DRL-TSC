@@ -25,7 +25,15 @@ import traci
 from src.trafficmetrics import TrafficMetrics
 from collections import defaultdict
 from src.helper_funcs import phi, estimate_velocity, newell_franklin
-from src.CTM import CTM_model 
+from src.CTM import CTM_model
+
+LEFT_TURN_PHASES = {
+    '79':       'rrrGrrrrrrrrGrrrrr',
+    '62477148': 'rrrrrrrGGrrrrrrrGG',
+    '62500824': 'rrrGrrrrrrrrGrrrr',
+    '62532012': 'rrrGGGrrrr',
+    '62606176': 'rrrGGrrrrrrrrrGGrrrrr',
+}
 
 class TrafficSignalController:
     """Abstract base class for all traffic signal controller.
@@ -132,7 +140,7 @@ class TrafficSignalController:
         if mode == 'test':
             # self.metric_args = ['queue', 'delay']
             # self.metric_args = ['queue', 'delay', 'vehicle', 'intersec'] # wz
-            self.metric_args = ['delay', 'main_delay','side_delay']
+            self.metric_args = ['delay', 'main_delay','side_delay','throughput']
         self.trafficmetrics = TrafficMetrics(tsc_id, self.incoming_lanes, netdata, self.metric_args, mode)
 
         self.ep_rewards = []
@@ -164,7 +172,11 @@ class TrafficSignalController:
         # to the sumosim.py to initialize CTM
         self.junc_position = np.array(self.conn.junction.getPosition(self.id))
 
-        CTM_fp="./networks/plymouth/CTM_plymouth_1788_4ph.csv"
+        _corr3_ids = {'62532012', '62477148', '62500824'}
+        if self.id in _corr3_ids:
+            CTM_fp = f"./networks/plymouth_corr_3/CTM_corr3_{self.id}.csv"
+        else:
+            CTM_fp = "./networks/plymouth/CTM_plymouth_1788_4ph.csv"
         # CTM_fp="./networks/plymouth/CTM_Plymouth_122cells_4ph.csv"
         # CTM_fp="./networks/plymouth/CTM_plymouth_2407_1090.csv"
 
@@ -178,14 +190,26 @@ class TrafficSignalController:
                                  "15.0.00_0":"43","15.0.00_1":"43","15.0.00_2":"43",
                                  "-0.0.00_0":"87",
                                  "12.0.00_0":"133","12.0.00_1":"133"}
+        elif self.id in _corr3_ids:
+            # Loop detectors at the BEGINNING (upstream end) of each approach's entry lane, mapped to
+            # that approach's CTM source cell. Feeds REAL (signal-metered) arrivals into the source
+            # cells instead of the constant CSV demand -> fixes the corridor arterial over-count
+            # (upstream-coupled approaches were over-fed by constant demand). Detectors defined in
+            # networks/plymouth_corr_3/plymouth_corr_3_loops.add.xml (must be loaded by SUMO).
+            _corr3_lane2src = {
+                "62500824": {"-441190750_0": "1", "-441190750_1": "1", "-441190750_2": "1", "897491918_0": "30", "897491918_1": "30", "1463257289_0": "59", "1463257289_1": "59", "441190721_0": "82"},
+                "62477148": {"-412646493_0": "1", "-412646493_1": "1", "441190747_0": "32", "441190747_1": "32", "-441190744_0": "61", "-441190764#1_0": "90"},
+                "62532012": {"-441190747_0": "1", "-441190747_1": "1", "-441190747_2": "1", "-E4_0": "29", "-E3_0": "53", "-E3_1": "53"},
+            }
+            self.lane2souceNode = _corr3_lane2src.get(self.id, {})
         else:
             print("WARNING: no source node info provided for Loop detectors!")
-        
+
         CTM_sim_len = 2400 # longer than actual simulation length to avoid out of index
         self.CTM = CTM_model(CTM_fp,CTM_sim_len) # use default input
         # run for the warmup time
         self.CTM.fixed_time_CTM(100) # warmup time
-        
+
         self.net_status = None
         self.est_spd = None
 
@@ -195,10 +219,45 @@ class TrafficSignalController:
 
         self.fake_traj_dict = {}
 
-        self.CTM_phase_lane = {"rrrrrrrrrrrrrGGGGG": ['7_0','7_1','7_2','7_3'],
-                               "rrrrGGGGrrrrrrrrrr": ['5_0','5_1','5_2'],
-                               "rrrGrrrrrrrrGrrrrr": ['1_0','3_0'],
-                               "GGGrrrrrGGGGrrrrrr": ['1_1','1_2','1_3','3_1','3_2','3_3']} # for CTM phase mapping
+        if self.id == '62532012':
+            self.CTM_phase_lane = {
+                'GGGGGgrrrr': ['-441190747_0','-441190747_1','-441190747_2',
+                               '-E1_0','-E1_1','-E1_2'],
+                'GrrrrrGGGG': ['-E0_0','-E0_1'],
+            }
+        elif self.id == '62477148':
+            self.CTM_phase_lane = {
+                'rrrrGGGrrrrrrGGGrr': ['-897491918_0','-897491918_1','-897491918_2',
+                                       '-897491920_0','-897491920_1','-897491920_2',
+                                       '441190747_0','441190747_1',
+                                       '897491919_0','897491919_1','897491919_2'],
+                'rrrrrrrGGrrrrrrrGG': ['-897491918_0','-897491918_1','-897491918_2',
+                                       '-897491920_0','-897491920_1','-897491920_2'],
+                'GGGGrrrrrrrrrrrrrr': ['-441190742#0_0'],
+                'rrrrrrrrrGGGGrrrrr': ['-8721314_0','-8721314_1'],
+            }
+        elif self.id == '62500824':
+            self.CTM_phase_lane = {
+                'GGGrrrrrrGGGrrrrr': ['-441190750_0','-441190750_1','-441190750_2',
+                                      '-222786843_0','-222786843_1','-222786843_2',
+                                      '897491918_0','897491918_1',
+                                      '897491920_0','897491920_1',
+                                      '412646493_0','412646493_1','412646493_2'],
+                'rrrGrrrrrrrrGrrrr': ['-441190750_0','-441190750_1','-441190750_2',
+                                      '-222786843_0','-222786843_1','-222786843_2',
+                                      '897491918_0','897491918_1',
+                                      '897491920_0','897491920_1',
+                                      '412646493_0','412646493_1','412646493_2'],
+                'rrrrGGGGGrrrrrrrr': ['411705024_0','411705024_1','411705024_2','411705024_3',
+                                      '478958407_0','478958407_1','478958407_2','478958407_3'],
+                'rrrrrrrrrrrrrGGGG': ['1162299113_0','1162299113_1',
+                                      '142178743_0','142178743_1','142178743_2'],
+            }
+        else:
+            self.CTM_phase_lane = {"rrrrrrrrrrrrrGGGGG": ['7_0','7_1','7_2','7_3'],
+                                   "rrrrGGGGrrrrrrrrrr": ['5_0','5_1','5_2'],
+                                   "rrrGrrrrrrrrGrrrrr": ['1_0','3_0'],
+                                   "GGGrrrrrGGGGrrrrrr": ['1_1','1_2','1_3','3_1','3_2','3_3']}
     
     def init_loop(self, hist_len=10):
         # get all loop detector ID list
@@ -311,6 +370,7 @@ class TrafficSignalController:
 
     def get_SR_lanes(self,tlid, map_name="plymouth"):
         # WZ: we can also directly get the right-turning lane by reading each incoming lane with index 0.
+        self.SR_lanes = []  # default: no shared right-turn lanes (for unrecognized junctions)
         if map_name in ["plymoth",'plymouth']:
             if tlid == "79":
                 # first version: with all SR lanes
@@ -383,7 +443,7 @@ class TrafficSignalController:
         # self.display_queue(data, self.t)
         ################################
 
-        self.trafficmetrics.update(data, cv_data) #  : see if this needs to accomodate UV data
+        self.trafficmetrics.update(data, cv_data) # Ujwal: see if this needs to accomodate UV data
 
         #cv_data = self.get_v_data(con_veh_ls,mask,data) # wz: filter the data for cvs
         if act_lp:
@@ -456,7 +516,7 @@ class TrafficSignalController:
     def next_phase_duration(self,current_phase):
         raise NotImplementedError("Subclasses should implement this!")
 
-    def update(self, data, cv_data, uv_data, mask): #  added cv_data, uv_data for global critic; wz add mask
+    def update(self, data, cv_data, uv_data, mask): #Ujwal added cv_data, uv_data for global critic; wz add mask
         """
             Implement this function to perform any
            traffic signal class specific control/updates 
@@ -470,7 +530,7 @@ class TrafficSignalController:
         #create empty incoming lanes for use else where
         lane_vehicles = {l:{} for l in self.incoming_lanes}
         lane_vehicles_cv = {l: {} for l in self.incoming_lanes} # wz: cv
-        lane_vehicles_uv = {l: {} for l in self.incoming_lanes} #  : uv
+        lane_vehicles_uv = {l: {} for l in self.incoming_lanes} # Ujwal: uv
         # out_lane_vehicles = {l:{} for l in self.outgoing_lanes} # wz: presslight
 
         if tl_data is not None:
@@ -512,14 +572,18 @@ class TrafficSignalController:
     
     def phase_lanes(self, actions):
         phase_lanes = {a:[] for a in actions}
+        tlsindex = self.netdata['inter'][self.id]['tlsindex']
         for a in actions:
             green_lanes = set()
             red_lanes = set()
             for s in range(len(a)):
+                lane = tlsindex.get(s)
+                if lane is None:
+                    continue
                 if a[s] == 'g' or a[s] == 'G':
-                    green_lanes.add(self.netdata['inter'][self.id]['tlsindex'][s])
+                    green_lanes.add(lane)
                 elif a[s] == 'r':
-                    red_lanes.add(self.netdata['inter'][self.id]['tlsindex'][s])
+                    red_lanes.add(lane)
 
             ###some movements are on the same lane, removes duplicate lanes
             pure_green = [l for l in green_lanes if l not in red_lanes]
@@ -541,7 +605,22 @@ class TrafficSignalController:
 
     def get_state(self,tsc_type = None, num_segments=1,act_ctm=False): # add the tsc_type to provide different state setting
         #the state is the normalized density of all incoming lanes
-        if tsc_type in ['cavlight','mmitiss']:
+        if tsc_type == 'presslight':
+            # PHASE-BASED pressure state (redesigned to match CVLight victim training):
+            #   inc: per-phase incoming CV count, segmented, FAKE-COUNTABLE (attack surface)
+            #   out: per-phase outgoing CV count (real; fakes are injected on incoming lanes)
+            # Compute out first so the inc call runs LAST -> self.norm_CV holds the
+            # incoming-block norm (the attacker's feature->cell mapping relies on this).
+            # out also passes fake_veh_weight so fake DOWNSTREAM CVs (out-injection) count.
+            out = self.get_num_vehicle_cav(num_segments, 'actor', 'out',
+                                           fake_veh_weight=getattr(self, 'fake_veh_weight', 1.0))
+            inc = self.get_num_vehicle_cav(num_segments, 'actor', 'inc',
+                                           fake_veh_weight=getattr(self, 'fake_veh_weight', 1.0))
+            state = np.concatenate([inc, out])
+            self.state_record.append(state)
+            return state
+
+        elif tsc_type in ['cavlight','mmitiss']:
             self.delay_record = self.get_avg_delay('critic')
             # if act_ctm:
             #     return (np.concatenate([self.get_avg_speed(num_segments,'critic'),
@@ -613,6 +692,12 @@ class TrafficSignalController:
                     for lane in self.max_pressure_lanes[phase][lane_dir]:
                         if lane in self.cv_data.keys():
                             cv_count += len(self.cv_data[lane])
+                        # OUT-INJECTION: count fake CVs spoofed onto this lane. fake_veh_weight
+                        # lets the clean reference (weight=0) exclude them for confidence-drop.
+                        # Only the 'out' path reaches here for PressLight (segmented 'inc' uses
+                        # its own fv_state branch), so this adds fake downstream congestion.
+                        if lane in self.fake_traj_dict.keys():
+                            cv_count += fake_veh_weight * len(self.fake_traj_dict[lane])
                     num_cv.append(cv_count)
 
                 #return np.array(num_cv)
@@ -633,12 +718,10 @@ class TrafficSignalController:
             if agent == 'critic':
                 # if not self.act_ctm:
                 n_phase = len(self.max_pressure_lanes)
-                cv_state = np.array([[0,0,0],[0,0,0],
-                                [0],[0,0,0]], dtype=object)
-                uv_state = np.array([[0,0,0],[0,0,0],
-                                [0],[0,0,0]], dtype=object)
+                cv_state = self._build_phase_array(num_segments)
+                uv_state = self._build_phase_array(num_segments)
                 for i, phase in enumerate(self.max_pressure_lanes):
-                    if phase in ['rrrGrrrrrrrrGrrrrr']:
+                    if len(cv_state[i]) == 1:
                         for lane in self.max_pressure_lanes[phase][lane_dir]:
                             if lane in self.cv_data.keys():
                                 for car, info in self.cv_data[lane].items():
@@ -693,15 +776,11 @@ class TrafficSignalController:
                                         
             elif agent == 'actor':
                 n_phase = len(self.max_pressure_lanes)
-                # hard code for dual-ring phase setting
-                cv_state = np.array([[0,0,0],[0,0,0],
-                                [0],[0,0,0]], dtype=object)
-                fv_state = np.array([[0,0,0],[0,0,0],
-                                [0],[0,0,0]], dtype=object)
-                
+                cv_state = self._build_phase_array(num_segments)
+                fv_state = self._build_phase_array(num_segments)
+
                 for i, phase in enumerate(self.max_pressure_lanes):
-                    # # detect left_turn phase here
-                    if phase in ['rrrGrrrrrrrrGrrrrr']:
+                    if len(cv_state[i]) == 1:
                         for lane in self.max_pressure_lanes[phase][lane_dir]:
                             if lane in self.cv_data.keys():
                                 for car, info in self.cv_data[lane].items():
@@ -721,16 +800,16 @@ class TrafficSignalController:
                                                     self.detect_radius / num_segments)))
                                         # -----------------------------------------------
                                         cv_state[i][ind] += 1
-                
-                for i, phase in enumerate(self.CTM_phase_lane):
-                    # # detect left_turn phase here
-                    if phase in ['rrrGrrrrrrrrGrrrrr']:
-                        for lane in self.CTM_phase_lane[phase]:
+
+                for i, phase in enumerate(self.max_pressure_lanes):
+                    ctm_lanes = self.CTM_phase_lane.get(phase, [])
+                    if len(fv_state[i]) == 1:
+                        for lane in ctm_lanes:
                             if lane in self.fake_traj_dict.keys():
                                 for car, info in self.fake_traj_dict[lane].items():
                                     fv_state[i][-1] += fake_veh_weight
                     else:
-                        for lane in self.CTM_phase_lane[phase]:
+                        for lane in ctm_lanes:
                             if lane in self.fake_traj_dict.keys():
                                 for car, info in self.fake_traj_dict[lane].items():
                                     pos = info["lane_pos"]
@@ -796,20 +875,27 @@ class TrafficSignalController:
 
             return np.array(avg_delay_cv)/100
     
+    def _build_phase_array(self, num_segments, phases=None):
+        if phases is None:
+            phases = list(self.max_pressure_lanes.keys())
+        left_turn = LEFT_TURN_PHASES.get(self.id)
+        if left_turn not in phases:
+            left_turn = phases[0]
+        return np.array(
+            [[0] if p == left_turn else [0] * num_segments for p in phases],
+            dtype=object,
+        )
+
     def get_avg_speed(self, num_segments=1, agent=None, fake_veh_weight=1.0):
         # Function: return average speed per road segment per green phase
         if agent == "critic":
             n_phase = len(self.max_pressure_lanes)
-            cv_cnt = np.array([[0,0,0],[0,0,0],
-                                [0],[0,0,0]], dtype=object) 
-            cv_speed = np.array([[0,0,0],[0,0,0],
-                                [0],[0,0,0]], dtype=object) 
-            uv_cnt = np.array([[0,0,0],[0,0,0],
-                                [0],[0,0,0]], dtype=object) 
-            uv_speed = np.array([[0,0,0],[0,0,0],
-                                [0],[0,0,0]], dtype=object) 
+            cv_cnt = self._build_phase_array(num_segments)
+            cv_speed = self._build_phase_array(num_segments)
+            uv_cnt = self._build_phase_array(num_segments)
+            uv_speed = self._build_phase_array(num_segments)
             for i, phase in enumerate(self.max_pressure_lanes):
-                if phase in ['rrrGrrrrrrrrGrrrrr']:
+                if len(cv_cnt[i]) == 1:
                     empty_cv_lane = 0
                     empty_uv_lane = 0
                     num_lane_phase = len(self.max_pressure_lanes[phase]['inc'])
@@ -906,13 +992,13 @@ class TrafficSignalController:
 
         elif agent == "actor":
             n_phase = len(self.max_pressure_lanes)
-            cv_cnt =  np.array([[0,0,0],[0,0,0], [0],[0,0,0]], dtype=object)
-            cv_speed =  np.array([[0,0,0],[0,0,0], [0],[0,0,0]], dtype=object)
-            fv_cnt = np.array([[0,0,0],[0,0,0], [0],[0,0,0]], dtype=object) 
-            fv_speed = np.array([[0,0,0],[0,0,0], [0],[0,0,0]], dtype=object)
-            
+            cv_cnt = self._build_phase_array(num_segments)
+            cv_speed = self._build_phase_array(num_segments)
+            fv_cnt = self._build_phase_array(num_segments)
+            fv_speed = self._build_phase_array(num_segments)
+
             for i, phase in enumerate(self.max_pressure_lanes):
-                if phase in ['rrrGrrrrrrrrGrrrrr']:
+                if len(cv_cnt[i]) == 1:
                     num_lane_phase = len(self.max_pressure_lanes[phase]['inc'])
                     for lane in self.max_pressure_lanes[phase]['inc']:
                         if lane in self.cv_data.keys():
@@ -931,17 +1017,18 @@ class TrafficSignalController:
                                     ind = min(num_segments - 1, int(pos // (self.detect_radius / num_segments)))
                                     cv_cnt[i][ind] += 1
                                     cv_speed[i][ind] += info[traci.constants.VAR_SPEED]
-            
+
             # add fake vehicles into state
-            for i, phase in enumerate(self.CTM_phase_lane):
-                if phase in ['rrrGrrrrrrrrGrrrrr']:
-                    for lane in self.CTM_phase_lane[phase]:
+            for i, phase in enumerate(self.max_pressure_lanes):
+                ctm_lanes = self.CTM_phase_lane.get(phase, [])
+                if len(fv_cnt[i]) == 1:
+                    for lane in ctm_lanes:
                         if lane in self.fake_traj_dict.keys():
                             for car, info in self.fake_traj_dict[lane].items():
                                 fv_cnt[i][-1] += fake_veh_weight
                                 fv_speed[i][-1] += info["speed"] * fake_veh_weight
                 else:
-                    for lane in self.CTM_phase_lane[phase]:
+                    for lane in ctm_lanes:
                         if lane in self.fake_traj_dict.keys():
                             for car, info in self.fake_traj_dict[lane].items():
                                 pos = info["lane_pos"]
@@ -988,7 +1075,7 @@ class TrafficSignalController:
     
     def get_num_vehicle(self, global_critic='none', num_segments=1):
         #number of vehicles in each incoming lane divided by the lane's capacity
-        if num_segments==1: #  : Bypass unnecessary computation if no segmentation
+        if num_segments==1: #Ujwal : Bypass unnecessary computation if no segmentation
 
             if global_critic == 'total':
                 return np.array([len(self.data[lane]) for lane in self.incoming_lanes])
@@ -1081,7 +1168,7 @@ class TrafficSignalController:
 
     def empty_intersection(self):
         # for lane in self.incoming_lanes:
-        #     # wz: here   change it from self.data to self.cv_data makes sense since intersection can only observe CVs.
+        #     # wz: here ujwal change it from self.data to self.cv_data makes sense since intersection can only observe CVs.
         #     if len(self.cv_data[lane]) > 0:
         #         return False
         # return True
