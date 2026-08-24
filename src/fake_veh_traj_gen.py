@@ -96,7 +96,7 @@ def optimization_process(dict_test,
 
         # timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
 
-        # save_dir = "/home/wangzhi/Documents/DRL-attacker/exp_log/fake_traj"        
+        # save_dir = "/home/ /Documents/DRL-attacker/exp_log/fake_traj"        
         # if not os.path.exists(save_dir):
         #     os.makedirs(save_dir)
         

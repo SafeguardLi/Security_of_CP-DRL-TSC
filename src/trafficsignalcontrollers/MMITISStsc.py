@@ -102,7 +102,7 @@ class mmitissTSC(TrafficSignalController):
         # initialize I-SIG regression model
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = RegressionNet().to(self.device)
-        self.model.load_state_dict(torch.load("/home/wangzhi/Documents/DRL-attacker/experiments/attacker_mmitiss/CAV_pen_rate_5.0/plymouth_bin_real_real/saved_models/ISIG_surr_class_0522.pth"))
+        self.model.load_state_dict(torch.load("/home/ /Documents/DRL-attacker/experiments/attacker_mmitiss/CAV_pen_rate_5.0/plymouth_bin_real_real/saved_models/ISIG_surr_class_0522.pth"))
         self.model.eval()
 
     def next_phase(self):
@@ -138,7 +138,7 @@ class mmitissTSC(TrafficSignalController):
             return self.red_t
 
     def update(self, data, cv_data,uv_data, mask):
-        # Wangzhi 01192024
+        #   01192024
         # data: include all vehicles' info, data: {lane_id:{veh_id:{VAR_LANEPOSITION, 
         #                                                           VAR_SPEED, 
         #                                                           VAR_LANE_ID, VAR_ROAD_ID, VAR_TIMELOSS, VAR_POSITION},...},...}

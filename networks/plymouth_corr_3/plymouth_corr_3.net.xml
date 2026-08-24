@@ -4,11 +4,11 @@
 <configuration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/neteditConfiguration.xsd">
 
     <input>
-        <sumo-net-file value="/home/wangzhi/Documents/DRL-attacker/networks/plymouth_corr_3/plymouth_corr_3.net.xml"/>
+        <sumo-net-file value="/home/ /Documents/DRL-attacker/networks/plymouth_corr_3/plymouth_corr_3.net.xml"/>
     </input>
 
     <output>
-        <output-file value="/home/wangzhi/Documents/DRL-attacker/networks/plymouth_corr_3/plymouth_corr_3.net.xml"/>
+        <output-file value="/home/ /Documents/DRL-attacker/networks/plymouth_corr_3/plymouth_corr_3.net.xml"/>
     </output>
 
     <processing>
