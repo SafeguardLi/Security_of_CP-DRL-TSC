@@ -82,25 +82,34 @@ class LearnerProc(Process):
                 exp_buffer_list = self.exp_replay[agent_id]
                 exp_buffer_len = len(exp_buffer_list)
                 
-                # The condition for training is that the buffer is full (nreplay)
-                if exp_buffer_len >= self.args.nreplay:
+                _sybil = getattr(self.args, 'att_model', None) == 'sybil'
+                # sybil (off-policy DQN): train on a persistent rolling buffer as soon as a minibatch
+                # exists, but RATE-LIMIT updates to collection (<= 1 train_batch per transition pushed)
+                # so the fast learner doesn't blast all updates on the initial buffer. PPO keeps the
+                # original collect-nreplay-then-train gate.
+                _min_buf = self.args.batch if _sybil else self.args.nreplay
+                _mult = float(getattr(self.args, 'sybil_replay_mult', 1.0))
+                _rate_ok = (not _sybil) or (self.rl_stats[agent_id]['updates'] <
+                                            _mult * self.rl_stats[agent_id].get('n_exp', 0))
+                if exp_buffer_len >= _min_buf and _rate_ok:
 
-                    # 1. SAMPLE THE BATCH (Safely grab the data) 
+                    # 1. SAMPLE THE BATCH (Safely grab the data)
                     # --- FIX G: Use agent.sample_replay() to get the copy of the full list ---
                     sample_batch = agent.sample_replay()
-                    
+
                     # Check if the sampled batch is valid before proceeding to training
                     if len(sample_batch) == 0:
                         # This should no longer happen with the fixed AttRLAgent.sample_replay
                         print(f"!!!!FATAL WARNING: Sampled batch for {agent_id} was empty. Skipping update.")
-                        continue 
+                        continue
 
                     if self.rl_stats[agent_id]['updates'] == 0:
-                        if self.args.save:
+                        if self.args.save and not _sybil:
                             # Pass the sampled batch to save_replays_local
-                            self.save_replays_local(tsc, sample_batch) 
+                            self.save_replays_local(tsc, sample_batch)
                         print('\n \n ',agent_id, ' exp replay full, beginning batch updates******** \n \n')
-                        self.rl_stats[agent_id]['n_exp'] = exp_buffer_len
+                        if not _sybil:   # sybil keeps its cumulative n_exp (collection counter)
+                            self.rl_stats[agent_id]['n_exp'] = exp_buffer_len
                         
                     if self.rl_stats[agent_id]['updates'] < self.args.updates:
                         
@@ -127,7 +136,17 @@ class LearnerProc(Process):
             if self.args.save:
                 for tsc in self.agent_ids:
                     if self.update_to_save(tsc):
-                        self.save_weights({tsc+'_att': att_neural_networks[tsc+'_att']})
+                        if getattr(self.args, 'att_model', None) == 'sybil':
+                            from src.helper_funcs import get_fp
+                            agents[tsc+'_att'].save_weights(get_fp(self.args, 'saved_models/sybil/' + str(tsc), False))
+                        else:
+                            self.save_weights({tsc+'_att': att_neural_networks[tsc+'_att']})
+        # Sybil: always save the final trained weights (independent of save_u cadence)
+        if getattr(self.args, 'att_model', None) == 'sybil' and self.args.save:
+            from src.helper_funcs import get_fp
+            for tsc in self.agent_ids:
+                agents[tsc+'_att'].save_weights(get_fp(self.args, 'saved_models/sybil/' + str(tsc), False))
+                print(f'[SybilDQN learner] final weights saved for {tsc}')
         write_to_log(' LEARNER #'+str(self.idx)+' FINISHED TRAINING LOOP ===========')
 
 
@@ -154,14 +173,26 @@ class LearnerProc(Process):
 
     def gen_agents(self, neural_networks):
         agents = {}
+        _sybil = getattr(self.args, 'att_model', None) == 'sybil'
         for agent in self.agent_ids:
-            n_action = [2,1]
-            agents[agent+'_att'] = rl_att_factory('ppo_att', self.args,
-                              neural_networks[agent+'_att'], self.exp_replay[agent+'_att'], 
-                              self.rl_stats[agent+'_att'], n_action, self.args.eps, agent)
+            if _sybil:
+                ag = rl_att_factory('sybil_dqn', self.args, None,
+                                    self.exp_replay[agent+'_att'], self.rl_stats[agent+'_att'],
+                                    None, self.args.eps, agent)
+                # resume from disk if present; then broadcast initial weights to the actors
+                from src.helper_funcs import get_fp
+                ag.load_weights(get_fp(self.args, 'saved_models/sybil/' + str(agent), False))
+                self.rl_stats[agent+'_att']['online']['dqn'] = ag.get_weights()
+                agents[agent+'_att'] = ag
+            else:
+                agents[agent+'_att'] = rl_att_factory('ppo_att', self.args,
+                                  neural_networks[agent+'_att'], self.exp_replay[agent+'_att'],
+                                  self.rl_stats[agent+'_att'], [2,1], self.args.eps, agent)
         return agents
         
     def distribute_weights(self, neural_networks):
+        if getattr(self.args, 'att_model', None) == 'sybil':
+            return neural_networks   # sybil weights flow via rl_stats['online']['dqn'] (gen_agents/train_batch)
         for nn_name in neural_networks: # nn_name is 'INT_1_att', etc.
             actor1_weights = neural_networks[nn_name]['actor_app'].get_weights('online')
             critic_weights = neural_networks[nn_name]['critic'].get_weights('online')

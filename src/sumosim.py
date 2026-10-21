@@ -72,7 +72,7 @@ class SumoSim:
                 self.global_metric_args = []
         self.global_traffic_metrics = GlobalTrafficMetrics(netdata, self.global_metric_args, self.args.mode)
 
-        #  
+        # Yaxing
         print(idx) # wz: idx is the index of thread
         check_and_make_dir('./runtime')
         self.cwd = './runtime/' + str(idx) + '/'
@@ -114,7 +114,7 @@ class SumoSim:
 
     def gen_con_veh(self):
         '''
-         : get the subscription of all vehicles and filter a portion of them as CVs
+        wangzhi: get the subscription of all vehicles and filter a portion of them as CVs
         v_data: id of all newly departed vehicles
         :return: a list of ids of CVs
         '''
@@ -268,7 +268,7 @@ class SumoSim:
         v_data = self.conn.vehicle.getAllSubscriptionResults()
         lane_vehicles = {}
         lane_vehicles_cv = {} # wz: cv
-        lane_vehicles_uv = {} #  : uv
+        lane_vehicles_uv = {} # Ujwal: uv
         for v in v_data:
             lane = v_data[v][traci.constants.VAR_LANE_ID]
             # wz: note, here the lane could be the outgoing lane. So we will store vehicle info on outgoing lanes
@@ -439,6 +439,7 @@ class SumoSim:
         self.attacker = {tl+'_att': None for tl in self.tl_junc}
         
     def create_attacker(self, rl_stats, exp_replays, eps, neural_networks = None):
+        self.rl_stats = rl_stats   # keep a handle so the sybil close hook can log last_loss
         self.tl_junc = self.get_traffic_lights()
         shared = getattr(self.args, 'shared_att', False)
         target = getattr(self.args, 'att_target', '')
@@ -455,7 +456,8 @@ class SumoSim:
             if self.args.mode == 'test' and target and tl != target:
                 self.attacker[tl + '_att'] = None
                 continue
-            self.attacker[tl + '_att'] = att_factory("ppo_att", tl, self.args, self.netdata,
+            _atype = "sybil_dqn" if getattr(self.args, 'att_model', None) == 'sybil' else "ppo_att"
+            self.attacker[tl + '_att'] = att_factory(_atype, tl, self.args, self.netdata,
                                                      rl_stats[akey(tl)], exp_replays[akey(tl)],
                                                      neural_networks[akey(tl)], eps, self.conn)
 
@@ -648,6 +650,46 @@ class SumoSim:
                         writer.writeheader()
                         writer.writerows(tsc._defense_log)
                     print(f'[SDSMDefense] Trust log saved → {fpath}')
+        # Sybil-DQN benchmark (distributed): the LEARNER saves weights; each actor appends one
+        # convergence-log row per episode (reward / halting / action histogram) for monitoring.
+        if isinstance(self.tsc, dict) and getattr(self.args, 'att_model', None) == 'sybil' and self.args.mode == 'train':
+            import os, csv, numpy as _np
+            from src.helper_funcs import get_fp as _get_fp
+            for tsc in self.tsc.values():
+                r = getattr(tsc, '_sybil_ep_r', None)
+                if r is None:
+                    continue
+                nh = getattr(tsc, '_sybil_ep_nh', []); nm = getattr(tsc, '_sybil_ep_nm', [])
+                act = getattr(tsc, '_sybil_ep_act', [])
+                logp = _get_fp(self.args, 'saved_models/sybil/sybil_train_log.csv', False)
+                os.makedirs(os.path.dirname(logp), exist_ok=True)
+                new = not os.path.exists(logp)
+                with open(logp, 'a', newline='') as f:
+                    w = csv.writer(f)
+                    if new:
+                        w.writerow(['n_dec', 'reward_sum', 'reward_mean', 'nhalt_mean', 'nmove_mean',
+                                    'loss_mean'] + [f'act{i}' for i in range(len(act))])
+                    _loss = self.rl_stats.get(str(tsc.id) + '_att', {}).get('last_loss', 0.0) \
+                        if hasattr(self, 'rl_stats') else 0.0
+                    w.writerow([len(r), round(float(_np.sum(r)), 3),
+                                round(float(_np.mean(r)), 4) if r else 0.0,
+                                round(float(_np.mean(nh)), 2) if nh else 0.0,
+                                round(float(_np.mean(nm)), 2) if nm else 0.0,
+                                round(float(_loss), 5)] + list(act))
+                print(f'[SybilDQN actor] episode log -> {logp} (reward_mean={round(float(_np.mean(r)),4) if r else 0})')
+                # Also save the latest (learner-synced) weights to disk here, so 79.pt always exists
+                # even if the learner is interrupted before its own after-loop final save fires.
+                ag = getattr(tsc, 'attacker', None)
+                try:
+                    w_latest = None
+                    if hasattr(self, 'rl_stats'):
+                        w_latest = self.rl_stats.get(str(tsc.id) + '_att', {}).get('online', {}).get('dqn')
+                    if w_latest and ag is not None and hasattr(ag, 'set_weights'):
+                        ag.set_weights(w_latest)
+                    if ag is not None and hasattr(ag, 'save_weights'):
+                        ag.save_weights(_get_fp(self.args, 'saved_models/sybil/' + str(tsc.id), False))
+                except Exception as _e:
+                    print(f'[SybilDQN actor] weight save skipped: {_e}')
         #self.conn.close()
         self.conn.close()
         self.sumo_process.terminate()

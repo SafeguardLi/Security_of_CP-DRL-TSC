@@ -51,7 +51,7 @@ class SimProc(Process):
                                               self.args.n_hidden) # always load TSC NN
         
         # generate attacker NN only when attack is enabled
-        if getattr(self.args, 'att_model', None) == 'drl':
+        if getattr(self.args, 'att_model', None) in ('drl', 'sybil'):
             att_neural_networks = gen_att_neural_networks(self.args,
                                                   self.netdata,
                                                   self.netdata['inter'].keys(),
@@ -83,19 +83,22 @@ class SimProc(Process):
                     self.write_to_csv(self.sim.sim_stats())
                 #self.write_travel_times()
                 for t in self.sim.attacker:
+                    # sybil / rule-based attackers have no PPO ep_rewards/state_record to collect
+                    if self.sim.attacker[t] is None or getattr(self.args, 'att_model', None) == 'sybil':
+                        continue
                     reward_store[t].append(self.sim.attacker[t].ep_rewards) # wz: extend(self.sim.tsc[t].ep_rewards)
                     state_store[t].append(self.sim.attacker[t].state_record)
                 self.sim.close()
                 time.sleep(2)
             for t in reward_store.keys():
-                #wz: change for grid search. originally wrote by  
+                #wz: change for grid search. originally wrote by ujwal
                 path = 'log/train_reward/processid_'+str(self.idx)+'/'
                 path = get_fp(self.args, path)
                 #path = os.path.join('experiments',f'{self.args.tsc}',f'Global_{self.args.global_critic}',f'CV_pen_rate_{self.args.pen_rate}',f'{self.args.sim}_{self.args.flow_type}_{self.args.turn_type}',f'gamma_{self.args.gamma}',f'eps_{self.args.eps}',f'temp_{self.args.temperature}',path)
                 check_and_make_dir(path)
                 save_data(os.path.join(path,'train_rewards_'+ str(t) + '_updates_' +str(self.args.updates) + '.pkl'), reward_store[t])
             for t in state_store.keys():
-                #wz: change for grid search. originally wrote by  
+                #wz: change for grid search. originally wrote by ujwal
                 path = 'log/train_state/processid_'+str(self.idx)+'/'
                 path = get_fp(self.args, path)
                 #path = os.path.join('experiments',f'{self.args.tsc}',f'Global_{self.args.global_critic}',f'CV_pen_rate_{self.args.pen_rate}',f'{self.args.sim}_{self.args.flow_type}_{self.args.turn_type}',f'gamma_{self.args.gamma}',f'eps_{self.args.eps}',f'temp_{self.args.temperature}',path)

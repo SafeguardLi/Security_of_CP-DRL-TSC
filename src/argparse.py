@@ -135,8 +135,21 @@ def parse_cl_args():
                            help='data source for training or testing, either from SUMO traci or from perception in CARLA, default:sumo, options: sumo, carla')
 
     parser.add_argument("-sumo_detect", action='store_true', help='enable sumo to do perception, default: False')
+    parser.add_argument("-sybil_max_veh", type=int, default=15, dest='sybil_max_veh',
+                        help="Sybil-DQN: max vehicles injected per approach (fair vs CAVLight's 15/feature)")
+    parser.add_argument("-sybil_scale_levels", type=int, default=3, dest='sybil_scale_levels',
+                        help="Sybil-DQN: (legacy) scale levels; ignored by the location-based action design")
+    parser.add_argument("-sybil_replay_mult", type=float, default=6.0, dest='sybil_replay_mult',
+                        help="Sybil-DQN: relax the 1:1 update/collection rate-limit -> allow updates up to "
+                             "mult*n_exp (replay-buffer reuse). 1.0 = original 1:1; higher = more grad steps/transition")
+    parser.add_argument("-sybil_cost", type=float, default=0.2, dest='sybil_cost',
+                        help="Sybil-DQN benchmark (Arabi 2021): per-vehicle cost d in reward Nhalt-Nmove-d*n")
+    parser.add_argument("-sybil_opt", type=str, default='adam', choices=['adam','sgd'], dest='sybil_opt',
+                        help="Sybil-DQN optimizer (paper compares SGD vs Adam)")
+    parser.add_argument("-sybil_lr", type=float, default=0.02, dest='sybil_lr',
+                        help="Sybil-DQN learning rate (paper: 0.02)")
     parser.add_argument("-att_model", type=str, default=None,
-                        choices=['drl', 'minPressure', 'random'],
+                        choices=['drl', 'minPressure', 'random', 'sybil'],
                         dest='att_model',
                         help='attack model / target-phase selector (all share the JSMA+injection pipeline): '
                              '"drl" = trained PPO attacker; "minPressure" = rule-based pressure heuristic '

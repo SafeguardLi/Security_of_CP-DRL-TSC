@@ -4,6 +4,9 @@ from src.attackers.nextphaseattacker import NextPhaseAttacker
 from src.rl_att_factory import rl_att_factory
 
 def att_factory(att_type, tl, args, netdata, rl_stats, exp_replay, neural_network, eps, conn):
+    if att_type == 'sybil_dqn':
+        from src.rl_att_factory import rl_att_factory as _rf
+        return _rf('sybil_dqn', args, neural_network, exp_replay, rl_stats, None, eps, tl)
     if att_type == 'ppo_att':
         # TODO: action for app_selector actor is 4+1, for scale_selector actor is 3
         n_action = [2] #[2,1] # hard code for 3 segments and 4 approaches #TODO

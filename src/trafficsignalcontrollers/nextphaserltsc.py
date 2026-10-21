@@ -780,7 +780,14 @@ class NextPhaseRLTSC(TrafficSignalController):
             # ---------------------------------------------------------
             # 3. ACTUAL VICTIM RESPONSE (WITH ATTACK)
             # ---------------------------------------------------------
-            if self.acting and self.attacker is not None:
+            if self.acting and getattr(self.args, 'att_model', None) == 'sybil':
+                # Sybil benchmark: inject the chosen fake detected vehicles directly (no JSMA).
+                from src.attackers import sybil_attacker as _sa
+                input_state = _sa.inject(state[1], getattr(self, '_sybil_action', 0),
+                                         getattr(self, 'norm_CV', 1.0),
+                                         int(getattr(self.args, 'sybil_scale_levels', 3)),
+                                         int(getattr(self.args, 'sybil_max_veh', 15)))
+            elif self.acting and self.attacker is not None:
                 # Apply the attack vector to generate the perturbed state
                 input_state = self.attacker.get_attacked_state(
                     state[1],
@@ -910,9 +917,12 @@ class NextPhaseRLTSC(TrafficSignalController):
                         except Exception:
                             pass
                         _rr = round(self.req_succ_cnt / max(1, self.req_cnt), 3)
-                        print("REALIZE target!=clean:", self.req_succ_cnt, "/", self.req_cnt,
-                              "=", _rr, "| clean=", clean_idx, "target=", target_act,
-                              "realized=", action_idx)
+                        if getattr(self.args, 'att_model', None) != 'sybil':
+                            # flip-rate vs a TARGET action is a JSMA/PPO metric; sybil has no target
+                            # action (it injects counts for congestion), so this is meaningless for it.
+                            print("REALIZE target!=clean:", self.req_succ_cnt, "/", self.req_cnt,
+                                  "=", _rr, "| clean=", clean_idx, "target=", target_act,
+                                  "realized=", action_idx)
                 else:
                     self.att_success_idx = 0
                     target_act = None
@@ -929,6 +939,9 @@ class NextPhaseRLTSC(TrafficSignalController):
                     if dt <= 0: dt = 1.0 
                     
                     avg_delay = self.accumulated_delay_reward / dt
+                    # expose the just-ended phase's avg_delay so the Sybil-DQN fork can use the
+                    # SAME delay signal the CAVLight attacker optimizes (credited to the prev action)
+                    self._last_avg_delay = avg_delay
 
                     # --- marginal-delay reward (opt-in via -marginal_delay) ------------
                     # Score the attack against a benign counterfactual instead of absolute
@@ -964,9 +977,9 @@ class NextPhaseRLTSC(TrafficSignalController):
                     phase_was_flip = self.phase_attack_successful
                     # ==========================
 
-                    # Send to Reward Function (DRL attacker only)
-                    # We pass 'phase_was_flip' as 'att_success_idx' to enable the Gate/Bonus
-                    if self.attacker is not None:
+                    # Send to Reward Function (PPO DRL attacker only; sybil pushes its own
+                    # (s,a,r,s') to the shared replay in the att_model=='sybil' fork above).
+                    if self.attacker is not None and getattr(self.args, 'att_model', None) != 'sybil':
                         r_delay, r_jsma = self.attacker.get_reward(
                             old_exp['a'],
                             delay_for_reward,
@@ -1056,7 +1069,7 @@ class NextPhaseRLTSC(TrafficSignalController):
             # 7. ATTACK GENERATION (New Cycle)
             # ---------------------------------------------------------
             _att_model = getattr(self.args, 'att_model', None)
-            _rule_based = _att_model in ('minPressure', 'random')
+            _rule_based = _att_model in ('minPressure', 'random', 'sybil')
             # Deploy-to-one: rule-based attackers (minPressure/random) don't own an attacker object,
             # so the att_target gating (which sets non-target attackers to None) doesn't reach them —
             # they must honor att_target explicitly, else a "per-target" run attacks EVERY intersection
@@ -1157,6 +1170,40 @@ class NextPhaseRLTSC(TrafficSignalController):
                     rand_action = random.randint(0, 1)
                     self.att_action = [rand_action, None, None, rand_action, False]
                     self.s = None
+                elif _att_model == 'sybil':
+                    # Sybil-DQN benchmark (Arabi et al., CSR 2021): a plain DQN injecting fake
+                    # ("Sybil") detected vehicles to increase congestion. DISTRIBUTED: this actor
+                    # picks an action with the learner-synced weights and PUSHES (s,a,r,s') to the
+                    # shared replay; the learner proc trains. The attacker object (self.attacker)
+                    # is the SybilDQNAgent created by create_attacker with the shared replay/stats.
+                    from src.attackers import sybil_attacker as _sa
+                    _scl = int(getattr(self.args, 'sybil_scale_levels', 3))
+                    _mxv = int(getattr(self.args, 'sybil_max_veh', 15))
+                    _ag = self.attacker
+                    if not hasattr(self, '_sybil_prev'):
+                        self._sybil_prev = None
+                        self._sybil_ep_r = []; self._sybil_ep_nh = []; self._sybil_ep_nm = []
+                        self._sybil_ep_act = [0] * _sa.n_actions(_scl)
+                        self._last_avg_delay = 0.0
+                    n_phase = len(self.green_phases)
+                    syb_state = _sa.build_state(state[1], self.curr_phase_idx,
+                                                self.phase_duration, self.g_max, n_phase)
+                    syb_action = _ag.get_action(syb_state, self.epsilon, self.curr_phase_idx) if _ag is not None else 0
+                    # reward of the PREVIOUS action is realized one phase later (== now); push to shared replay.
+                    # DELAY reward = the CAVLight attacker's delay part: positive_delay_score =
+                    # max(total_delay/10, 0)**2 / 5, with total_delay = avg_delay over the phase the
+                    # previous action influenced (self._last_avg_delay, same signal the PPO attacker uses).
+                    # No "none" action and uniform 30-veh injection -> drop the Arabi count/cost terms.
+                    if self.mode == 'train' and _ag is not None and self._sybil_prev is not None:
+                        _td = float(getattr(self, '_last_avg_delay', 0.0))
+                        _r = (max(_td / 10.0, 0.0) ** 2) / 5.0
+                        _ag.store_experience(self._sybil_prev[0], self._sybil_prev[1], _r, syb_state, 0.0)
+                        self._sybil_ep_r.append(_r); self._sybil_ep_nh.append(_td); self._sybil_ep_nm.append(0.0)
+                    self._sybil_ep_act[int(syb_action)] += 1
+                    self._sybil_prev = (syb_state, syb_action)
+                    self._sybil_action = int(syb_action)
+                    self.att_action = [None, None, None, None, False]  # injection handled by sybil path
+                    self.s = None
                 else:
                     # DRL attacker: query the PPO agent for the target phase action
                     # wo CTM: replace self.CTM_est_state with state[1]
@@ -1186,6 +1233,10 @@ class NextPhaseRLTSC(TrafficSignalController):
                 if getattr(self.args, 'force_flip', False):
                     # FORCE-FLIP: no JSMA, no injection — victim already forced to att_action.
                     self.adv_x_guide, self.feature_ids, target_action = None, np.array([], dtype=int), int(self.att_action[0])
+                elif getattr(self.args, 'att_model', None) == 'sybil':
+                    # Sybil benchmark does NOT use JSMA — its attack is the direct SDSM count
+                    # injection in input_state. Skip get_advX (saves compute, silences JSMA logs).
+                    self.adv_x_guide, self.feature_ids, target_action = None, np.array([], dtype=int), None
                 elif _is_corr3_jsma:
                     # -future_jsma: target the CTM-projected FUTURE victim state at the next decision
                     # time (t_next_Gmin_end) instead of the current state[1] — restores the e9bd9b9
@@ -1210,7 +1261,8 @@ class NextPhaseRLTSC(TrafficSignalController):
                     jsma_state = state[1] if getattr(self, '_cv_block_offset', None) == 0 else self.CTM_est_state
                     self.adv_x_guide, self.feature_ids, target_action = self.rlagent.get_advX(jsma_state, next_phase_idx, self.att_action)
 
-                print("JSMA select feature",self.feature_ids)
+                if getattr(self.args, 'att_model', None) != 'sybil':
+                    print("JSMA select feature",self.feature_ids)
                 # self.feature_ids = [] ## benign case
 
                 # ATTACK-STATE DEVIATION LOG: at the JSMA-selected features, the DESIGNED value
@@ -1298,7 +1350,8 @@ class NextPhaseRLTSC(TrafficSignalController):
                 fail_JSMA_rate = round(self.failed_JSMA_cnt/self.num_JSMA_cnt,2)
                 flip_rate = round(self.num_flip_cnt/self.num_JSMA_cnt,2) 
                 opt_succ_rate = round(self.num_opt_cnt/self.num_JSMA_cnt,2)
-                print("Failed JSMA rate",  fail_JSMA_rate, "total flip rate", flip_rate,"Opt success rate",opt_succ_rate)
+                if getattr(self.args, 'att_model', None) != 'sybil':
+                    print("Failed JSMA rate",  fail_JSMA_rate, "total flip rate", flip_rate,"Opt success rate",opt_succ_rate)
                 # Persist the realization funnel to a file (tee-independent) so we can read
                 # the diagnostic after any run. Overwritten each cycle -> final file holds the
                 # full-episode cumulative aggregate. Distinguishes the two failure modes:
@@ -1330,263 +1383,264 @@ class NextPhaseRLTSC(TrafficSignalController):
                 
                 
 
-                # (Fake Vehicle Generation Loop - Omitted for brevity, logic remains same)
-                fake_vehicle_dict = {}
-                filled_spot_record = {} 
-                initial_dist_ls = []
-                self.red_phase_status = {}
-                self.fake_traj_dict_allT = {}
-                # BUGFIX (one-time attack): also clear the green-phase accumulation cache each decision
-                # so fake vehicles from PRIOR attack decisions don't carry over (within a decision the
-                # trajectory is still rebuilt from fake_traj_dict_allT; across decisions it starts fresh).
-                self.green_history_cache = {}
-                self.green_history_last_t = {}
+                if getattr(self.args, 'att_model', None) != 'sybil':  # sybil: skip corr3 trajgen realization (attack = SDSM count injection in input_state)
+                    # (Fake Vehicle Generation Loop - Omitted for brevity, logic remains same)
+                    fake_vehicle_dict = {}
+                    filled_spot_record = {} 
+                    initial_dist_ls = []
+                    self.red_phase_status = {}
+                    self.fake_traj_dict_allT = {}
+                    # BUGFIX (one-time attack): also clear the green-phase accumulation cache each decision
+                    # so fake vehicles from PRIOR attack decisions don't carry over (within a decision the
+                    # trajectory is still rebuilt from fake_traj_dict_allT; across decisions it starts fresh).
+                    self.green_history_cache = {}
+                    self.green_history_last_t = {}
 
-                # TODO: update this section to fit the 2-features framework. for each feature, we should run one round of optimization
-                # combine the two feature's fake veh trajectories given each time step
-                self.t_fakeTraj_duration = []
-                _is_corr3 = getattr(self, 'CTM', None) is not None and getattr(self.CTM, 'ctm_version', '').startswith('corr3_')
-                for idx in self.feature_ids:
-                    # OUT-INJECTION (PressLight): an out-block feature -> fake CVs spoofed onto
-                    # the phase's OUTGOING lanes. get_num_vehicle_cav('out') is single-segment
-                    # (presence-based), so position is nominal; placement raises out[p] and thus
-                    # lowers that phase's pressure. Bypasses the CTM-cell path used for 'inc'.
-                    out_lanes = getattr(self, 'out_feature2lanes', {}).get(idx)
-                    if out_lanes is not None:
-                        if out_lanes:
+                    # TODO: update this section to fit the 2-features framework. for each feature, we should run one round of optimization
+                    # combine the two feature's fake veh trajectories given each time step
+                    self.t_fakeTraj_duration = []
+                    _is_corr3 = getattr(self, 'CTM', None) is not None and getattr(self.CTM, 'ctm_version', '').startswith('corr3_')
+                    for idx in self.feature_ids:
+                        # OUT-INJECTION (PressLight): an out-block feature -> fake CVs spoofed onto
+                        # the phase's OUTGOING lanes. get_num_vehicle_cav('out') is single-segment
+                        # (presence-based), so position is nominal; placement raises out[p] and thus
+                        # lowers that phase's pressure. Bypasses the CTM-cell path used for 'inc'.
+                        out_lanes = getattr(self, 'out_feature2lanes', {}).get(idx)
+                        if out_lanes is not None:
+                            if out_lanes:
+                                t_start = self.t // 10
+                                t_end = t_start + min(15, int(self.CTM.t_next_Gmin_end) - t_start) + 20
+                                traj = {}
+                                if getattr(self.args, 'traj_gen', False):
+                                    # TRAJGEN (outgoing): realistic FREE-FLOW stream. Fake CVs enter the
+                                    # outgoing lane and COAST at the lane's free-flow speed (assume no
+                                    # downstream obstruction -> they keep moving), lane_pos advancing each
+                                    # second, dropped once past the lane end. Realistic alternative to the
+                                    # static/frozen block; the sustained presence (=out count) is whatever
+                                    # a free-flow stream supports within the detection range.
+                                    # -out_leave_speed: leaving speed (m/s); 0 => lane free-flow. Model the
+                                    # outgoing lane as a STANDING QUEUE whose DENSITY rises as speed drops
+                                    # (car-following: spacing = max(MIN_GAP, v*TIME_GAP)). In a corridor the
+                                    # downstream signal makes departing vehicles queue, so a low leaving
+                                    # speed => a dense packed queue filling the detection range => high
+                                    # out-count; free-flow => sparse. The queue crawls forward at v.
+                                    v_set = float(getattr(self.args, 'out_leave_speed', 0.0))
+                                    MIN_GAP = 7.5    # veh length + min standstill gap (m)
+                                    TIME_GAP = 2.0   # desired time headway (s) at speed
+                                    det = float(getattr(self, 'detect_radius', 80.0))
+                                    for ol in out_lanes:
+                                        # outgoing lanes may be INTERNAL junction lanes (':...') absent
+                                        # from netdata['lane'] -> fall back to free-flow defaults.
+                                        _li = self.netdata['lane'].get(ol, {})
+                                        v = v_set if v_set > 0 else float(_li.get('speed', 17.88))
+                                        v = max(v, 0.5)                          # avoid div-by-0 / frozen
+                                        L = float(_li.get('length', 100.0))
+                                        span = min(L, det)
+                                        spacing = max(MIN_GAP, v * TIME_GAP)     # slower -> denser queue
+                                        N = max(1, int(span / spacing))          # CVs present on the lane
+                                        for t in range(t_start, t_end):
+                                            shift = (v * (t - t_start)) % spacing  # whole queue crawls at v
+                                            for i in range(N):
+                                                pos = shift + i * spacing
+                                                if pos > span:
+                                                    continue
+                                                # consistent id (bounded standing queue) by default; with
+                                                # -out_trail append the timestep -> unique id per step so the
+                                                # green cache accumulates a DENSE TRAIL of visited positions.
+                                                if getattr(self.args, 'out_trail', False):
+                                                    vid = 'fakeout_q_%s_%d_%d_%d' % (idx, i, self.t, t)
+                                                else:
+                                                    vid = 'fakeout_q_%s_%d_%d' % (idx, i, self.t)
+                                                traj.setdefault(t, {}).setdefault(ol, {})[vid] = {"speed": v, "lane_pos": pos}
+                                else:
+                                    # STATIC injection: fake CVs frozen near the lane start (max presence).
+                                    for _fake_veh in range(15):
+                                        ol = out_lanes[_fake_veh % len(out_lanes)]
+                                        vid = 'fakeout_' + str(idx) + '_' + str(_fake_veh) + '_' + str(self.t)
+                                        for t in range(t_start, t_end):
+                                            traj.setdefault(t, {}).setdefault(ol, {})[vid + '_' + str(t)] = {"speed": 5.0, "lane_pos": 10.0}
+                                self.fake_traj_dict_allT[idx] = traj
+                            self.initial_attack_time = self.t // 10
+                            # Out-injection routing:
+                            #  - STATIC (per-timestep ids '..._{t}') -> SNAPSHOT path (True): the green cache
+                            #    would pile up a NEW id every step at a fixed pos -> stacked ghosts. Snapshot
+                            #    keeps it bounded/one-time.
+                            #  - TRAJGEN density (CONSISTENT ids '...q_{idx}_{i}_{gen_t}') -> GREEN accumulate/
+                            #    repeat path (False): .update() REPLACES same ids (bounded) AND the cache is
+                            #    not reset per-step, so the out queue SUSTAINS past t_end instead of vanishing
+                            #    (restores the standing-presence persistence the corridor trajgen lost).
+                            self.red_phase_status[idx] = not getattr(self.args, 'traj_gen', False)
+                            continue
+
+                        cell_ls = self.feature2cells.get(idx)
+                        if cell_ls is None:
+                            continue
+
+                        if self.feature_to_phase(idx) != self.curr_phase_idx:
+                            # if next phase is not the phase where fake vehicle is inserted, here the curr_phase is already the next phase
+                            red_phase_flag = True
+                        else:
+                            red_phase_flag = False
+
+                        # PER-FEATURE RESET: each feature's optimization must solve only its OWN ~15 fake
+                        # vehicles. Previously fake_vehicle_dict accumulated across features (init'd once
+                        # before the loop) -> later features optimized ~22-30 vehicles, which cannot fit
+                        # with headway in the corridor's short (~68 m) segments -> Gurobi infeasible (the
+                        # 70%->41% success drop). filled_spot_record / initial_dist_ls stay accumulated so
+                        # cross-feature placements still don't physically overlap.
+                        fake_vehicle_dict = {}
+
+                        for _fake_veh in range(15):
+                            fake_veh_id = 'fake_'+str(idx)+str(_fake_veh)+str(self.t)
+
+                            final_dist2bar, final_spd, final_lane = self.fake_final_state_gen(cell_ls, filled_spot_record)
+                        
+                            if final_dist2bar == False:
+                                pass 
+                        
+                            else:
+                                initial_dist2bar, initial_spd = self.get_initial_fake_state(final_dist2bar, final_spd, int(self.CTM.t_next_Gmin_end)-int(self.t/10)) 
+                                initial_dist2bar = self.adjust_ini_pos(initial_dist2bar, initial_dist_ls)
+                                initial_dist_ls.append(initial_dist2bar)
+
+                                fake_vehicle_dict[fake_veh_id] = [initial_dist2bar, initial_spd, final_dist2bar, final_spd, final_lane]
+
+                        fake_vehicle_dict = self.align_initial_with_final(fake_vehicle_dict)
+
+                        opt_start = time.time()
+                        if not getattr(self.args, 'traj_gen', False):
+                            # DEFAULT (static): bypass the Gurobi optimizer (corr3 AND isolated) — place
+                            # fake vehicles at their target position for every attack timestep. This is
+                            # the white-box "fixed fake vehicles" attack (state-space upper bound). Enable
+                            # the realistic trajectory optimizer with -traj_gen (else branch: optimization_process).
                             t_start = self.t // 10
                             t_end = t_start + min(15, int(self.CTM.t_next_Gmin_end) - t_start) + 20
                             traj = {}
-                            if getattr(self.args, 'traj_gen', False):
-                                # TRAJGEN (outgoing): realistic FREE-FLOW stream. Fake CVs enter the
-                                # outgoing lane and COAST at the lane's free-flow speed (assume no
-                                # downstream obstruction -> they keep moving), lane_pos advancing each
-                                # second, dropped once past the lane end. Realistic alternative to the
-                                # static/frozen block; the sustained presence (=out count) is whatever
-                                # a free-flow stream supports within the detection range.
-                                # -out_leave_speed: leaving speed (m/s); 0 => lane free-flow. Model the
-                                # outgoing lane as a STANDING QUEUE whose DENSITY rises as speed drops
-                                # (car-following: spacing = max(MIN_GAP, v*TIME_GAP)). In a corridor the
-                                # downstream signal makes departing vehicles queue, so a low leaving
-                                # speed => a dense packed queue filling the detection range => high
-                                # out-count; free-flow => sparse. The queue crawls forward at v.
-                                v_set = float(getattr(self.args, 'out_leave_speed', 0.0))
-                                MIN_GAP = 7.5    # veh length + min standstill gap (m)
-                                TIME_GAP = 2.0   # desired time headway (s) at speed
-                                det = float(getattr(self, 'detect_radius', 80.0))
-                                for ol in out_lanes:
-                                    # outgoing lanes may be INTERNAL junction lanes (':...') absent
-                                    # from netdata['lane'] -> fall back to free-flow defaults.
-                                    _li = self.netdata['lane'].get(ol, {})
-                                    v = v_set if v_set > 0 else float(_li.get('speed', 17.88))
-                                    v = max(v, 0.5)                          # avoid div-by-0 / frozen
-                                    L = float(_li.get('length', 100.0))
-                                    span = min(L, det)
-                                    spacing = max(MIN_GAP, v * TIME_GAP)     # slower -> denser queue
-                                    N = max(1, int(span / spacing))          # CVs present on the lane
+                            for veh_id, (_, _, fin_d, fin_s, fin_lane) in fake_vehicle_dict.items():
+                                if fin_d >= 0 and fin_lane:
                                     for t in range(t_start, t_end):
-                                        shift = (v * (t - t_start)) % spacing  # whole queue crawls at v
-                                        for i in range(N):
-                                            pos = shift + i * spacing
-                                            if pos > span:
-                                                continue
-                                            # consistent id (bounded standing queue) by default; with
-                                            # -out_trail append the timestep -> unique id per step so the
-                                            # green cache accumulates a DENSE TRAIL of visited positions.
-                                            if getattr(self.args, 'out_trail', False):
-                                                vid = 'fakeout_q_%s_%d_%d_%d' % (idx, i, self.t, t)
-                                            else:
-                                                vid = 'fakeout_q_%s_%d_%d' % (idx, i, self.t)
-                                            traj.setdefault(t, {}).setdefault(ol, {})[vid] = {"speed": v, "lane_pos": pos}
-                            else:
-                                # STATIC injection: fake CVs frozen near the lane start (max presence).
-                                for _fake_veh in range(15):
-                                    ol = out_lanes[_fake_veh % len(out_lanes)]
-                                    vid = 'fakeout_' + str(idx) + '_' + str(_fake_veh) + '_' + str(self.t)
-                                    for t in range(t_start, t_end):
-                                        traj.setdefault(t, {}).setdefault(ol, {})[vid + '_' + str(t)] = {"speed": 5.0, "lane_pos": 10.0}
+                                        traj.setdefault(t, {}).setdefault(fin_lane, {})[f"{veh_id}_{t}"] = {"speed": fin_s, "lane_pos": fin_d}
                             self.fake_traj_dict_allT[idx] = traj
-                        self.initial_attack_time = self.t // 10
-                        # Out-injection routing:
-                        #  - STATIC (per-timestep ids '..._{t}') -> SNAPSHOT path (True): the green cache
-                        #    would pile up a NEW id every step at a fixed pos -> stacked ghosts. Snapshot
-                        #    keeps it bounded/one-time.
-                        #  - TRAJGEN density (CONSISTENT ids '...q_{idx}_{i}_{gen_t}') -> GREEN accumulate/
-                        #    repeat path (False): .update() REPLACES same ids (bounded) AND the cache is
-                        #    not reset per-step, so the out queue SUSTAINS past t_end instead of vanishing
-                        #    (restores the standing-presence persistence the corridor trajgen lost).
-                        self.red_phase_status[idx] = not getattr(self.args, 'traj_gen', False)
-                        continue
-
-                    cell_ls = self.feature2cells.get(idx)
-                    if cell_ls is None:
-                        continue
-
-                    if self.feature_to_phase(idx) != self.curr_phase_idx:
-                        # if next phase is not the phase where fake vehicle is inserted, here the curr_phase is already the next phase
-                        red_phase_flag = True
-                    else:
-                        red_phase_flag = False
-
-                    # PER-FEATURE RESET: each feature's optimization must solve only its OWN ~15 fake
-                    # vehicles. Previously fake_vehicle_dict accumulated across features (init'd once
-                    # before the loop) -> later features optimized ~22-30 vehicles, which cannot fit
-                    # with headway in the corridor's short (~68 m) segments -> Gurobi infeasible (the
-                    # 70%->41% success drop). filled_spot_record / initial_dist_ls stay accumulated so
-                    # cross-feature placements still don't physically overlap.
-                    fake_vehicle_dict = {}
-
-                    for _fake_veh in range(15):
-                        fake_veh_id = 'fake_'+str(idx)+str(_fake_veh)+str(self.t)
-
-                        final_dist2bar, final_spd, final_lane = self.fake_final_state_gen(cell_ls, filled_spot_record)
-                        
-                        if final_dist2bar == False:
-                            pass 
-                        
                         else:
-                            initial_dist2bar, initial_spd = self.get_initial_fake_state(final_dist2bar, final_spd, int(self.CTM.t_next_Gmin_end)-int(self.t/10)) 
-                            initial_dist2bar = self.adjust_ini_pos(initial_dist2bar, initial_dist_ls)
-                            initial_dist_ls.append(initial_dist2bar)
-
-                            fake_vehicle_dict[fake_veh_id] = [initial_dist2bar, initial_spd, final_dist2bar, final_spd, final_lane]
-
-                    fake_vehicle_dict = self.align_initial_with_final(fake_vehicle_dict)
-
-                    opt_start = time.time()
-                    if _is_corr3 and not getattr(self.args, 'traj_gen', False):
-                        # DEFAULT (static): bypass the Gurobi optimizer for corr3 — place fake
-                        # vehicles at their target position for every attack timestep. Validates the
-                        # reward signal without the solver. Enable the realistic optimizer with
-                        # -traj_gen (goes to the else branch: optimization_process).
-                        t_start = self.t // 10
-                        t_end = t_start + min(15, int(self.CTM.t_next_Gmin_end) - t_start) + 20
-                        traj = {}
-                        for veh_id, (_, _, fin_d, fin_s, fin_lane) in fake_vehicle_dict.items():
-                            if fin_d >= 0 and fin_lane:
-                                for t in range(t_start, t_end):
-                                    traj.setdefault(t, {}).setdefault(fin_lane, {})[f"{veh_id}_{t}"] = {"speed": fin_s, "lane_pos": fin_d}
-                        self.fake_traj_dict_allT[idx] = traj
-                    else:
-                        # -traj_gen: realistic optimizer. If infeasible it returns {} and NO fake
-                        # vehicles are injected this cycle (no static fallback, by design).
-                        _atg = min(15, int(self.CTM.t_next_Gmin_end) - self.t // 10)
-                        _nveh = len(fake_vehicle_dict)
-                        _dists = [v[2] for v in fake_vehicle_dict.values() if v[2] is not None and v[2] >= 0]
-                        _fspds = [v[3] for v in fake_vehicle_dict.values() if v[3] is not None]
-                        # -opt_dynamic_n: on infeasibility ({}), retry with fewer fakes (drop one from the
-                        # densest same-lane group each round). GREEN fails (~0.09) because fast (~free-flow)
-                        # heterogeneous-speed fakes packed into ~5 m headway slots can't hold the fixed-order
-                        # gap while moving; thinning the tightest lane relieves it -> PARTIAL injection > none.
-                        _kept = _nveh
-                        _acc = getattr(self.args, 'opt_acc_low', -3.5)   # #2: emergency-braking bound
-                        if getattr(self.args, 'opt_dynamic_n', False):
-                            _work = dict(fake_vehicle_dict)
-                            _res = optimization_process(_work, attack_time_gap=_atg, extend_time_gap=20,
-                                                        initial_attack_time=self.t // 10, red_phase=red_phase_flag,
-                                                        acc_low=_acc)
-                            while (not _res) and len(_work) > 3:
-                                # drop one vehicle from the lane that currently has the most fakes
-                                _bylane = {}
-                                for _vid, _v in _work.items():
-                                    _bylane.setdefault(_v[4], []).append(_vid)
-                                _densest = max(_bylane.values(), key=len)
-                                del _work[_densest[-1]]
+                            # -traj_gen: realistic optimizer. If infeasible it returns {} and NO fake
+                            # vehicles are injected this cycle (no static fallback, by design).
+                            _atg = min(15, int(self.CTM.t_next_Gmin_end) - self.t // 10)
+                            _nveh = len(fake_vehicle_dict)
+                            _dists = [v[2] for v in fake_vehicle_dict.values() if v[2] is not None and v[2] >= 0]
+                            _fspds = [v[3] for v in fake_vehicle_dict.values() if v[3] is not None]
+                            # -opt_dynamic_n: on infeasibility ({}), retry with fewer fakes (drop one from the
+                            # densest same-lane group each round). GREEN fails (~0.09) because fast (~free-flow)
+                            # heterogeneous-speed fakes packed into ~5 m headway slots can't hold the fixed-order
+                            # gap while moving; thinning the tightest lane relieves it -> PARTIAL injection > none.
+                            _kept = _nveh
+                            _acc = getattr(self.args, 'opt_acc_low', -3.5)   # #2: emergency-braking bound
+                            if getattr(self.args, 'opt_dynamic_n', False):
+                                _work = dict(fake_vehicle_dict)
                                 _res = optimization_process(_work, attack_time_gap=_atg, extend_time_gap=20,
                                                             initial_attack_time=self.t // 10, red_phase=red_phase_flag,
                                                             acc_low=_acc)
-                            self.fake_traj_dict_allT[idx] = _res
-                            _kept = len(_work) if _res else 0
-                        else:
-                            self.fake_traj_dict_allT[idx] = optimization_process(fake_vehicle_dict,
-                                                        attack_time_gap = _atg,
-                                                        extend_time_gap = 20, initial_attack_time = self.t//10, red_phase=red_phase_flag,
-                                                        acc_low=_acc)
-                        # TRUE incoming-optimizer success rate (separate from the misleading opt_succ_rate,
-                        # which the always-succeeding out-density model inflates). Gurobi returns {} on
-                        # infeasibility -> empty result = a real incoming-injection failure.
-                        self._opt_in_total = getattr(self, '_opt_in_total', 0) + 1
-                        _ok = bool(self.fake_traj_dict_allT[idx])
-                        # DIAGNOSTIC: what inputs drive infeasibility? (attack_time_gap window, N vehicles
-                        # that must fit with headway, target-distance span, mean target speed). corr3 fail
-                        # rate (~55%) >> isolated (~30%); GREEN (red=False) fails far more than RED -> mean
-                        # final-speed (fspd) is the discriminator (free-flow discharge vs ~0 queue).
-                        if not hasattr(self, 'opt_diag'): self.opt_diag = []
-                        # SPATIAL attribution: which approach/geometry does this optimization serve?
-                        # Tests whether failures cluster on specific physical structure (fewer lanes =
-                        # tighter headway; shorter cells; high-demand arterial through-movements that
-                        # saturate -> low fspd). num_lane = approach capacity; ntgt = distinct target
-                        # lanes actually used (nveh/ntgt = vehicles-per-lane, the binding headway load).
-                        _cd = getattr(self.CTM, 'cell_dict', {})
-                        _cells = [str(c) for c in (cell_ls or []) if str(c) in _cd]
-                        _apps = sorted(set(int(_cd[c]['approach']) for c in _cells)) if _cells else []
-                        _nlanes = [int(_cd[c]['num_lane']) for c in _cells]
-                        _ncell2int = [int(_cd[c].get('ncell2int', -1)) for c in _cells]
-                        _ntgt = len(set(v[4] for v in fake_vehicle_dict.values())) if fake_vehicle_dict else 0
-                        # FINAL number of fake vehicles actually generated (distinct base ids in the output
-                        # trajectory; the optimizer/replay can drop vehicles that end past the bar). With
-                        # -opt_dynamic_n this is <= kept <= nveh; it is the real injected count.
-                        _traj_out = self.fake_traj_dict_allT[idx]
-                        _gen_ids = set()
-                        if _traj_out:
-                            for _lanes in _traj_out.values():
-                                for _vehs in _lanes.values():
-                                    for _vid in _vehs:
-                                        _gen_ids.add(str(_vid).rsplit('_', 1)[0])
-                        _ngen = len(_gen_ids)
-                        self.opt_diag.append({'atg': int(_atg), 'nveh': int(_nveh), 'red': bool(red_phase_flag),
-                                              'dmin': float(min(_dists)) if _dists else -1.0,
-                                              'dmax': float(max(_dists)) if _dists else -1.0,
-                                              'fspd': float(np.mean(_fspds)) if _fspds else -1.0,
-                                              'kept': int(_kept), 'ngen': int(_ngen), 'ok': _ok,
-                                              'feat': int(idx), 'app': _apps[0] if _apps else -1,
-                                              'apps': _apps, 'nlane': min(_nlanes) if _nlanes else -1,
-                                              'ntgt': int(_ntgt),
-                                              'ncell2int': max(_ncell2int) if _ncell2int else -1})
-                        if not _ok:
-                            self._opt_in_fail = getattr(self, '_opt_in_fail', 0) + 1
-                            if getattr(self.args, 'opt_fallback', False):
-                                # DIAGNOSTIC: Gurobi failed -> place fakes at TARGET positions (frozen,
-                                # static-style) so trajgen injects on EVERY JSMA-success decision. Tests
-                                # if injection FREQUENCY (the ~54% failures) is the trajgen weakness.
-                                _ts = self.t // 10; _te = _ts + min(15, int(self.CTM.t_next_Gmin_end) - _ts) + 20
-                                _tj = {}
-                                for veh_id, (_, _, fin_d, fin_s, fin_lane) in fake_vehicle_dict.items():
-                                    if fin_d >= 0 and fin_lane:
-                                        for t in range(_ts, _te):
-                                            _tj.setdefault(t, {}).setdefault(fin_lane, {})[f"{veh_id}_{t}"] = {"speed": fin_s, "lane_pos": fin_d}
-                                self.fake_traj_dict_allT[idx] = _tj
-                    opt_time = time.time() - opt_start
-                    # print("opt_time",opt_time)
+                                while (not _res) and len(_work) > 3:
+                                    # drop one vehicle from the lane that currently has the most fakes
+                                    _bylane = {}
+                                    for _vid, _v in _work.items():
+                                        _bylane.setdefault(_v[4], []).append(_vid)
+                                    _densest = max(_bylane.values(), key=len)
+                                    del _work[_densest[-1]]
+                                    _res = optimization_process(_work, attack_time_gap=_atg, extend_time_gap=20,
+                                                                initial_attack_time=self.t // 10, red_phase=red_phase_flag,
+                                                                acc_low=_acc)
+                                self.fake_traj_dict_allT[idx] = _res
+                                _kept = len(_work) if _res else 0
+                            else:
+                                self.fake_traj_dict_allT[idx] = optimization_process(fake_vehicle_dict,
+                                                            attack_time_gap = _atg,
+                                                            extend_time_gap = 20, initial_attack_time = self.t//10, red_phase=red_phase_flag,
+                                                            acc_low=_acc)
+                            # TRUE incoming-optimizer success rate (separate from the misleading opt_succ_rate,
+                            # which the always-succeeding out-density model inflates). Gurobi returns {} on
+                            # infeasibility -> empty result = a real incoming-injection failure.
+                            self._opt_in_total = getattr(self, '_opt_in_total', 0) + 1
+                            _ok = bool(self.fake_traj_dict_allT[idx])
+                            # DIAGNOSTIC: what inputs drive infeasibility? (attack_time_gap window, N vehicles
+                            # that must fit with headway, target-distance span, mean target speed). corr3 fail
+                            # rate (~55%) >> isolated (~30%); GREEN (red=False) fails far more than RED -> mean
+                            # final-speed (fspd) is the discriminator (free-flow discharge vs ~0 queue).
+                            if not hasattr(self, 'opt_diag'): self.opt_diag = []
+                            # SPATIAL attribution: which approach/geometry does this optimization serve?
+                            # Tests whether failures cluster on specific physical structure (fewer lanes =
+                            # tighter headway; shorter cells; high-demand arterial through-movements that
+                            # saturate -> low fspd). num_lane = approach capacity; ntgt = distinct target
+                            # lanes actually used (nveh/ntgt = vehicles-per-lane, the binding headway load).
+                            _cd = getattr(self.CTM, 'cell_dict', {})
+                            _cells = [str(c) for c in (cell_ls or []) if str(c) in _cd]
+                            _apps = sorted(set(int(_cd[c]['approach']) for c in _cells)) if _cells else []
+                            _nlanes = [int(_cd[c]['num_lane']) for c in _cells]
+                            _ncell2int = [int(_cd[c].get('ncell2int', -1)) for c in _cells]
+                            _ntgt = len(set(v[4] for v in fake_vehicle_dict.values())) if fake_vehicle_dict else 0
+                            # FINAL number of fake vehicles actually generated (distinct base ids in the output
+                            # trajectory; the optimizer/replay can drop vehicles that end past the bar). With
+                            # -opt_dynamic_n this is <= kept <= nveh; it is the real injected count.
+                            _traj_out = self.fake_traj_dict_allT[idx]
+                            _gen_ids = set()
+                            if _traj_out:
+                                for _lanes in _traj_out.values():
+                                    for _vehs in _lanes.values():
+                                        for _vid in _vehs:
+                                            _gen_ids.add(str(_vid).rsplit('_', 1)[0])
+                            _ngen = len(_gen_ids)
+                            self.opt_diag.append({'atg': int(_atg), 'nveh': int(_nveh), 'red': bool(red_phase_flag),
+                                                  'dmin': float(min(_dists)) if _dists else -1.0,
+                                                  'dmax': float(max(_dists)) if _dists else -1.0,
+                                                  'fspd': float(np.mean(_fspds)) if _fspds else -1.0,
+                                                  'kept': int(_kept), 'ngen': int(_ngen), 'ok': _ok,
+                                                  'feat': int(idx), 'app': _apps[0] if _apps else -1,
+                                                  'apps': _apps, 'nlane': min(_nlanes) if _nlanes else -1,
+                                                  'ntgt': int(_ntgt),
+                                                  'ncell2int': max(_ncell2int) if _ncell2int else -1})
+                            if not _ok:
+                                self._opt_in_fail = getattr(self, '_opt_in_fail', 0) + 1
+                                if getattr(self.args, 'opt_fallback', False):
+                                    # DIAGNOSTIC: Gurobi failed -> place fakes at TARGET positions (frozen,
+                                    # static-style) so trajgen injects on EVERY JSMA-success decision. Tests
+                                    # if injection FREQUENCY (the ~54% failures) is the trajgen weakness.
+                                    _ts = self.t // 10; _te = _ts + min(15, int(self.CTM.t_next_Gmin_end) - _ts) + 20
+                                    _tj = {}
+                                    for veh_id, (_, _, fin_d, fin_s, fin_lane) in fake_vehicle_dict.items():
+                                        if fin_d >= 0 and fin_lane:
+                                            for t in range(_ts, _te):
+                                                _tj.setdefault(t, {}).setdefault(fin_lane, {})[f"{veh_id}_{t}"] = {"speed": fin_s, "lane_pos": fin_d}
+                                    self.fake_traj_dict_allT[idx] = _tj
+                        opt_time = time.time() - opt_start
+                        # print("opt_time",opt_time)
                     
-                    self.initial_attack_time = self.t//10
-                    self.red_phase_status[idx] = red_phase_flag
-                    self.fake_veh_traj_input.append([fake_vehicle_dict,red_phase_flag]) 
+                        self.initial_attack_time = self.t//10
+                        self.red_phase_status[idx] = red_phase_flag
+                        self.fake_veh_traj_input.append([fake_vehicle_dict,red_phase_flag]) 
                 
-                    self.t_fakeTraj_duration.append(opt_time)
+                        self.t_fakeTraj_duration.append(opt_time)
 
-                # DIAGNOSTIC (-inject_drop_rate R): randomly DROP a fraction R of feature injections
-                # (set to {}) to match trajgen's Gurobi failure frequency. Used to test STATIC at 46%
-                # frequency: if static still lands high impact -> PERSISTENCE (few frozen injections
-                # suffice); if it collapses to ~+2% -> FREQUENCY was the driver. Isolates the fallback.
-                _dr = float(getattr(self.args, 'inject_drop_rate', 0.0) or 0.0)
-                if _dr > 0:
-                    import random as _rnd
-                    for idx in list(self.feature_ids):
-                        if _rnd.random() < _dr:
-                            self.fake_traj_dict_allT[idx] = {}
+                    # DIAGNOSTIC (-inject_drop_rate R): randomly DROP a fraction R of feature injections
+                    # (set to {}) to match trajgen's Gurobi failure frequency. Used to test STATIC at 46%
+                    # frequency: if static still lands high impact -> PERSISTENCE (few frozen injections
+                    # suffice); if it collapses to ~+2% -> FREQUENCY was the driver. Isolates the fallback.
+                    _dr = float(getattr(self.args, 'inject_drop_rate', 0.0) or 0.0)
+                    if _dr > 0:
+                        import random as _rnd
+                        for idx in list(self.feature_ids):
+                            if _rnd.random() < _dr:
+                                self.fake_traj_dict_allT[idx] = {}
 
-                for idx in self.feature_ids:
-                    if len(self.fake_traj_dict_allT.get(idx, {})) > 0:
-                        self.num_opt_cnt += 1
-                        break
+                    for idx in self.feature_ids:
+                        if len(self.fake_traj_dict_allT.get(idx, {})) > 0:
+                            self.num_opt_cnt += 1
+                            break
 
-                self.fake_veh_gen_rate = len(fake_vehicle_dict.keys())/self.max_attack_scale 
-                self.current_cycle_exp["fake_veh_gen_rate"] = self.fake_veh_gen_rate
-                self.fake_vehicle_num = len(fake_vehicle_dict.keys())  
-                print("fake vehicle num:",self.fake_vehicle_num)
+                    self.fake_veh_gen_rate = len(fake_vehicle_dict.keys())/self.max_attack_scale 
+                    self.current_cycle_exp["fake_veh_gen_rate"] = self.fake_veh_gen_rate
+                    self.fake_vehicle_num = len(fake_vehicle_dict.keys())  
+                    print("fake vehicle num:",self.fake_vehicle_num)
 
-                self.JSMA_result.append([self.feature_ids, self.att_action, self.curr_phase_idx,self.adv_x_guide,self.CTM_est_state,self.instant_feature_ids, fail_JSMA_rate, flip_rate, opt_succ_rate, self.fake_veh_gen_rate,self.phase_attack_successful, self.t_fakeTraj_duration])
+                    self.JSMA_result.append([self.feature_ids, self.att_action, self.curr_phase_idx,self.adv_x_guide,self.CTM_est_state,self.instant_feature_ids, fail_JSMA_rate, flip_rate, opt_succ_rate, self.fake_veh_gen_rate,self.phase_attack_successful, self.t_fakeTraj_duration])
 
                 
 

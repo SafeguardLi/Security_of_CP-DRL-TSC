@@ -148,6 +148,11 @@ def nn_factory_att(input_d,output_d, args,  learner, load, tsc_att, n_hidden):
 
 def gen_att_neural_networks(args, netdata, tsc_ids, learner, load, n_hidden):
     neural_nets = {}
+    if getattr(args, 'att_model', None) == 'sybil':
+        # Sybil-DQN builds its own PyTorch net inside the agent; weights sync via rl_stats.
+        if getattr(args, 'shared_att', False):
+            return {'shared_att': None}
+        return {tsc + '_att': None for tsc in tsc_ids}
 
     if getattr(args, 'shared_att', False):
         # Centralized/generalized attacker: ONE network over the canonical padded
