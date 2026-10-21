@@ -1,6 +1,6 @@
 # DRL-attacker
 
-Code for *Security Analysis of Deep Reinforcement Learning Based Traffic Signal Control Systems Under Cooperative Perception Environment* (submitted to USENIX Security 2026).
+Code for *Security Analysis of Deep Reinforcement Learning Based Traffic Signal Control Systems Under Cooperative Perception Environment*.
 
 The project studies how a DRL traffic signal controller (TSC) that relies on cooperative perception (CAV-shared detections) can be attacked by injecting fake vehicles, and how a consistency check can defend against it. All experiments run in SUMO.
 
