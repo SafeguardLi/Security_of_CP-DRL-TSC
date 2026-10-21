@@ -1,0 +1,49 @@
+name: cosim
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.9
+  - pip
+
+  # ── Scientific stack ────────────────────────────────────────────────
+  - numpy=1.18.4
+  - pandas=1.3.5
+  - scipy=1.8.1
+  - matplotlib=3.5.3
+  - seaborn
+
+  # ── Machine learning ────────────────────────────────────────────────
+  - scikit-learn=1.3.2
+  - tensorflow=2.13.1   # includes keras 2.13
+  # pytorch is installed via pip (CUDA build not on conda-forge default)
+
+  # ── Optimisation ────────────────────────────────────────────────────
+  - pyomo                # LP/MILP modelling
+
+  # ── Traffic simulation (SUMO 1.20) ──────────────────────────────────
+  # Install SUMO separately: https://sumo.dlr.de/docs/Installing/index.html
+  # traci and sumolib are bundled with SUMO; also available on PyPI (see pip section)
+
+  # ── Utilities ───────────────────────────────────────────────────────
+  - tqdm
+
+  - pip:
+    # ── PyTorch (CUDA 12.1 build) ──────────────────────────────────
+    - torch==2.4.0
+
+    # ── SUMO Python bindings ───────────────────────────────────────
+    - traci==1.20.0
+    - sumolib==1.20.0
+
+    # ── Computer vision (occupancy-map video rendering) ────────────
+    - opencv-python-headless   # headless: no display required
+
+    # ── Adversarial ML ─────────────────────────────────────────────
+    - adversarial-robustness-toolbox  # ART: art.attacks, art.estimators
+
+    # ── Misc ───────────────────────────────────────────────────────
+    - memoization              # caching decorator used in CTM/TSC code
+
+    # ── Optimisation solver (optional, requires licence) ───────────
+    # - gurobipy               # uncomment if Gurobi licence is available
